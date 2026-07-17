@@ -425,3 +425,16 @@ leaves seams (custom mdspan layouts, the arena, the policy axes, the `Mesh` seam
 not build for them yet. **Near-term goal: a 2D C-grid barotropic SWE (the ocean core's fast
 mode).** North star: the full ocean dynamical core (§1) — a multi-month+ arc, climbed one
 roadmap rung at a time.
+
+**Non-hydrostatic is a separate future *regime*, not a from-start requirement.** The core is
+hydrostatic (the C-grid split-explicit ALE lineage of §1 is inherently so). NH would *add*:
+a global **elliptic (Poisson) solve** for the non-hydrostatic pressure `q`, a **projection /
+fractional-step** time integration, and a **prognostic `w`** — the hydrostatic operators
+(continuity / Coriolis / hydro-PGF / EOS / vmix) survive unchanged. Seam (unbuilt): the NH
+pressure is an extra `PGF`-style operator, the projection stepper is another `Integrator`, and
+the elliptic solve is a **bolt-on subsystem** (it does *not* fit the local-stencil policy
+pattern — it is globally coupled + iterative + preconditioned, the hardest GPU piece). **Caveat
+— NH ⟂ ALE:** a thickness-prognostic Lagrangian grid (ADR-6) and the NH elliptic operator do
+not coexist cleanly; an NH regime would use a fixed/sigma vertical grid (as Rakali's separate
+NH path does). So NH is a distinct regime — seam-ed, not built — and must not distort the
+hydrostatic core.
