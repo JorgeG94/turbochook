@@ -206,7 +206,8 @@ void baro_rhs(BaroState s, BaroState k, Params p) {
 }
 // The continuity-PPM / PV-Coriolis / FV-PGF *formulae* are the ocean core's. Rakali's
 // src/core/ocean/ is the authoritative reference — port the numerics (the algorithm), not
-// the source. `for_each_face` is the staggered-grid twin of `for_each_cell`.
+// the source. **See docs/PORTING_MAP.md for the exact file→module→procedure map.**
+// `for_each_face` is the staggered-grid twin of `for_each_cell`.
 
 // ── RK combine — per staggered field (each on its own grid extent) ──
 void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o = a·x + b·y

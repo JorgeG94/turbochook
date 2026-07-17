@@ -44,7 +44,8 @@ Goal: the proof-of-concept, and *not* a throwaway — this **is** the ocean core
 - **Arakawa C-grid** staggered `BaroState` (η centres, u/v faces) from the Arena.
 - Operators as compile-time policies (DESIGN §5): **`Continuity`** (PPM thickness flux),
   **`Coriolis`** (Sadourny PV-conserving), **`PGF`** (`-g ∇η`). Port the numerics from
-  Rakali `src/core/ocean/`; the algorithm, not the source.
+  Rakali `src/core/ocean/`; the algorithm, not the source. **Exact file→procedure map:
+  [`PORTING_MAP.md`](PORTING_MAP.md)** (items 1–6 + the driver are M2).
 - **Split-explicit** time integration (`Integrator` policy: fast barotropic substeps) — start
   with a single explicit forward-backward if that's simpler, build to the split.
 - Boundaries: **wall** + **periodic** as `BC` policies, halo-row fill before each stage

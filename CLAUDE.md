@@ -15,6 +15,8 @@ regime, **not** the coastal HLL/HLLC Godunov regime — do not build a Riemann-s
 > [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) is the `lib/core/` layer (directory layout +
 > logger + error handling, with reference implementations).
 > [`docs/ROADMAP.md`](docs/ROADMAP.md) is the milestone ladder; do them in order.
+> [`docs/PORTING_MAP.md`](docs/PORTING_MAP.md) maps each ocean algorithm to the exact Rakali
+> `src/core/ocean/` file→module→procedure to port it from (port the algorithm, not the source).
 
 ## Directory layout (where things go matters)
 
