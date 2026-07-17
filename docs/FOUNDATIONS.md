@@ -131,30 +131,35 @@ Notes:
   falls back to `std::format` + `std::fputs`. `std::format` itself is C++20 and widely
   available.
 
-## 4. `core/error.hpp` — error handling that's actually nice
+## 4. `core/error.hpp` — error handling (exceptions on the host)
 
-Design: `std::expected<T, Error>` (C++23) as `Result<T>`; every `Error` carries a
-`std::source_location` so failures self-report their origin; monadic composition
-(`.and_then`/`.transform`/`.or_else`); fail-loud, fail-early.
+Decision: **exceptions for the host path** (not mission-critical; setup failures are
+genuinely exceptional; RAII unwinds the arena/files cleanly on throw; catch once at `main`).
+`Error` derives from `std::runtime_error` and bakes a `std::source_location` into its
+message so `what()` self-reports code + file:line. **No `std::expected` ceremony.**
+
+The one hard constraint (see the split below): **exceptions cannot cross into a kernel** —
+`std::for_each(par_unseq, …)` with a throwing callable is `std::terminate`, and device code
+cannot throw. So kernels never throw; device failures are detected on the host and *then*
+thrown.
 
 ```cpp
 #pragma once
-#include <expected>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <source_location>
 #include <format>
-#include <utility>
 
 namespace tc {
 
 enum class Errc {
-    ok, invalid_config, unknown_scheme, out_of_memory,
+    invalid_config, unknown_scheme, out_of_memory,
     io_failure, nan_detected, cfl_violation, not_implemented,
 };
 
 constexpr std::string_view to_string(Errc c) {
     switch (c) {
-        case Errc::ok:              return "ok";
         case Errc::invalid_config:  return "invalid_config";
         case Errc::unknown_scheme:  return "unknown_scheme";
         case Errc::out_of_memory:   return "out_of_memory";
@@ -166,72 +171,152 @@ constexpr std::string_view to_string(Errc c) {
     }
 }
 
-struct Error {
-    Errc code;
-    std::string message;
-    std::source_location where;
-    Error(Errc c, std::string msg,
+class Error : public std::runtime_error {
+    Errc code_;
+    std::source_location where_;
+public:
+    Error(Errc c, std::string_view msg,
           std::source_location loc = std::source_location::current())
-        : code(c), message(std::move(msg)), where(loc) {}
+        : std::runtime_error(std::format("[{}] {} ({}:{})",
+                             to_string(c), msg, loc.file_name(), loc.line())),
+          code_(c), where_(loc) {}
+    Errc code() const noexcept { return code_; }
+    const std::source_location& where() const noexcept { return where_; }
 };
 
-template <class T>
-using Result = std::expected<T, Error>;
-
-// Build an error to `return` from a Result<T> function.
-inline std::unexpected<Error> fail(Errc c, std::string msg,
+// throw helper — reads like a statement at the call site
+[[noreturn]] inline void fail(Errc c, std::string_view msg,
         std::source_location loc = std::source_location::current()) {
-    return std::unexpected(Error{c, std::move(msg), loc});
-}
-
-// Top-level handler: log an Error with its origin (host, at the driver boundary).
-inline void report(const Error& e) {
-    logger().error("[{}] {}  ({}:{})",
-                   to_string(e.code), e.message, e.where.file_name(), e.where.line());
+    throw Error(c, msg, loc);
 }
 
 } // namespace tc
 ```
 
-Usage — fallible host ops return `Result<T>`:
+Usage — host ops just throw; one handler at the driver:
 
 ```cpp
-Result<FluxKind> parse_flux(std::string_view s) {
+FluxKind parse_flux(std::string_view s) {
     if (s == "hll")  return FluxKind::hll;
     if (s == "hllc") return FluxKind::hllc;
-    return fail(Errc::unknown_scheme, std::format("unknown flux scheme '{}'", s));
+    fail(Errc::unknown_scheme, std::format("unknown flux scheme '{}'", s));
 }
 
-// compose monadically; handle once at the top
-auto cfg = load_config(path)
-              .and_then(validate)
-              .and_then(build_solver);
-if (!cfg) { report(cfg.error()); return 1; }         // fail-loud, one place
+int main() try {
+    run();                                  // any tc::Error unwinds to here
+    return 0;
+} catch (const tc::Error& e) {
+    tc::logger().error("{}", e.what());     // already carries code + file:line
+    return 1;
+} catch (const std::exception& e) {
+    tc::logger().error("unhandled: {}", e.what());
+    return 1;
+}
 ```
 
-### Error philosophy (the host/device split — mirrors Rakali fail-loud)
+### Error philosophy — the host/device split (mirrors Rakali fail-loud)
 
-- **Host orchestration** (config, setup, I/O, dispatch): return `Result<T>`; propagate
-  monadically; `report()` + non-zero exit at the driver boundary. Invalid config / unknown
-  scheme fail **at setup**, not mid-run.
-- **Device kernels** cannot use `expected`/exceptions. They signal failure through data: a
-  device error-flag buffer or a NaN sentinel. The host runs a reduction after the step
-  (e.g. `std::transform_reduce` for `any(isnan)` / max CFL), and converts a bad result into
-  an `Error` (`Errc::nan_detected`, `Errc::cfl_violation`) → `report()` → abort. **CPU-green
-  ≠ device-correct**; these post-step guards are the fail-loud net.
-- **Exceptions** are reserved for genuinely exceptional host-side conditions
-  (`std::bad_alloc`, unrecoverable I/O). The hot loop neither throws nor catches.
+- **Host** (config, setup, I/O, dispatch, step boundary): `throw tc::Error`; catch once at
+  `main`; RAII cleans up on unwind. Bad config / unknown scheme fail **at setup**, not mid-run.
+- **Kernels never throw.** `par_unseq` + an escaping exception = `std::terminate`, and device
+  code can't throw anyway. Kernels are plain math.
+- **Device failures** (NaN, CFL blow-up) are signalled through *data*: a flag/NaN buffer the
+  host reduces after each step (`std::transform_reduce` for `any(isnan)` / max CFL). A bad
+  reduction → `fail(Errc::nan_detected, …)` **on the host** → same one handler. So device
+  errors surface as exceptions at the step boundary, never from inside the kernel.
+  **CPU-green ≠ device-correct** — these post-step guards are the net.
+- Don't throw per-cell in the hot loop — detect via the reduction, throw once at the boundary.
 
-## 5. `core/timer.hpp` (seed only)
+## 5. `core/profiler.hpp` — nested-region timing (RAII, `steady_clock`)
 
-A scoped `std::chrono::steady_clock` RAII timer that accumulates into a named registry — the
-minimal seed of a profiler. Keep it host-side; expand later if needed. (Not required before
-M2.)
+Port of Rakali's hierarchical profiler (active-region stack + per-region `child_time` →
+**self = total − child**; flat report by default, opt-in tree with inclusive/self columns).
+C++ makes it cleaner: **RAII scopes** replace manual start/stop — a guard starts on
+construction, stops on destruction, so nesting is LIFO-by-construction and exception-safe.
+
+Use **`std::chrono::steady_clock`** (monotonic) — *not* `high_resolution_clock`, which is
+often `system_clock` and can jump backwards under clock adjustment. Host-side wall-clock
+around a `for_each(par_unseq, …)` measures the kernel because stdpar syncs per call (same as
+`do concurrent`); use NVTX/nsys for the fine GPU timeline later.
+
+```cpp
+#pragma once
+#include <chrono>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace tc {
+
+class Profiler {
+    using clock = std::chrono::steady_clock;
+    struct Region { std::string name; double total=0, child=0; long calls=0; int parent=-1, depth=0; };
+    std::vector<Region> regions_;
+    std::vector<int> stack_;                 // active-region indices (the nesting stack)
+    bool enabled_ = true;
+
+    int find_or_create(std::string_view n) {
+        for (int i = 0; i < (int)regions_.size(); ++i) if (regions_[i].name == n) return i;
+        regions_.push_back(Region{std::string(n)}); return (int)regions_.size() - 1;
+    }
+    void close(int idx, clock::time_point t0) {
+        double dt = std::chrono::duration<double>(clock::now() - t0).count();
+        regions_[idx].total += dt; regions_[idx].calls += 1;
+        if (!stack_.empty() && stack_.back() == idx) stack_.pop_back();
+        if (!stack_.empty()) regions_[stack_.back()].child += dt;   // attribute to enclosing
+    }
+public:
+    void set_enabled(bool e) { enabled_ = e; }
+    void reset() { regions_.clear(); stack_.clear(); }
+    void report(bool tree = false) const;    // flat (default) / tree: inclusive vs self, %
+
+    class Scope {                            // RAII guard — start on ctor, stop on dtor
+        Profiler* p_; int idx_; clock::time_point t0_;
+        friend class Profiler;
+        Scope(Profiler* p, int idx) : p_(p), idx_(idx), t0_(clock::now()) {}
+    public:
+        Scope(Scope&& o) noexcept : p_(o.p_), idx_(o.idx_), t0_(o.t0_) { o.p_ = nullptr; }
+        Scope(const Scope&) = delete; Scope& operator=(const Scope&) = delete;
+        ~Scope() { if (p_) p_->close(idx_, t0_); }
+    };
+    [[nodiscard]] Scope scope(std::string_view name) {
+        if (!enabled_) return Scope{nullptr, -1};
+        int idx = find_or_create(name);
+        int parent = stack_.empty() ? -1 : stack_.back();
+        if (regions_[idx].calls == 0) {      // first-seen parent/depth (display only)
+            regions_[idx].parent = parent;
+            regions_[idx].depth  = parent < 0 ? 0 : regions_[parent].depth + 1;
+        }
+        stack_.push_back(idx);
+        return Scope{this, idx};
+    }
+};
+
+inline Profiler& profiler() { static Profiler inst; return inst; }
+
+#define TC_CONCAT_(a,b) a##b
+#define TC_CONCAT(a,b)  TC_CONCAT_(a,b)
+#define TC_PROFILE(name) auto TC_CONCAT(tc_prof_, __LINE__) = ::tc::profiler().scope(name)
+
+} // namespace tc
+```
+
+Usage — nesting is automatic:
+
+```cpp
+void step() {
+    TC_PROFILE("step");
+    { TC_PROFILE("rhs");     rhs<SWE, HLLC>(view(U), view(K), p); }   // for_each(par_unseq) inside
+    { TC_PROFILE("combine"); combine(view(U1), view(U), view(U), view(K), 1,0,1, p); }
+}
+// "step".child = rhs + combine; self("step") = total - child. Tree report shows both.
+```
 
 ## 6. Compiler/stdlib support notes
 
-- `std::expected`, `std::print`, `std::mdspan` are C++23; `std::format`, `std::source_location`
-  are C++20. On a stdlib lacking `<print>`, the logger falls back (§3). On a stdlib lacking
-  `std::mdspan`, vendor `kokkos/mdspan` behind a `std::` shim (DESIGN §9).
+- `std::print`, `std::mdspan` are C++23; `std::format`, `std::source_location` are C++20;
+  `std::chrono::steady_clock` is C++11. On a stdlib lacking `<print>`, the logger falls back
+  (§3). On a stdlib lacking `std::mdspan`, vendor `kokkos/mdspan` behind a `std::` shim
+  (DESIGN §9). (`std::expected` is C++23 too but we chose exceptions over it — §4.)
 - No third-party dependencies in `core/`. That is the whole point of `core/` — the stdlib is
   the dependency.

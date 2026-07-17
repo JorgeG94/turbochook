@@ -25,11 +25,15 @@ Single flat `tc` namespace; `lib/` on the include path (`#include "core/log.hpp"
 - **Logging** = `tc::logger()` (C++23 `std::format`/`std::print`, level-gated, compile-time-
   checked format strings). **Host-only** — never log from a kernel; device code signals via a
   flag/NaN buffer the host reduces.
-- **Errors** = `tc::Result<T>` (`std::expected<T, tc::Error>`); `Error` carries a
-  `std::source_location`. Host ops propagate monadically and `tc::report()` + exit at the
-  driver boundary. Fail-loud, fail-early (bad config/scheme dies at setup). Device failures
-  become an `Error` via a post-step host reduction (NaN/CFL guards). Exceptions only for
-  `bad_alloc`/unrecoverable I/O; the hot loop never throws.
+- **Errors** = **exceptions on the host**. `tc::Error : std::runtime_error` carries an `Errc`
+  + `std::source_location` (its `what()` self-reports code + file:line). Host ops `throw`;
+  catch once at `main` (log + exit); RAII unwinds cleanly. Fail-loud, fail-early (bad
+  config/scheme dies at setup). **Kernels never throw** (`par_unseq` + escaping exception =
+  `std::terminate`; device can't throw). Device failures (NaN/CFL) are detected by a
+  post-step host reduction, then thrown host-side. Don't throw per-cell in the hot loop.
+- **Profiling** = `tc::profiler()` + `TC_PROFILE("name")` (RAII, `steady_clock`, nested
+  regions → self vs inclusive), a port of Rakali's hierarchical profiler. Host-side; wraps
+  kernel launches (stdpar syncs per call). NVTX/nsys for the fine GPU timeline.
 
 ## The prime directive (non-negotiable)
 
