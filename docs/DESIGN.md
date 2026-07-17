@@ -271,6 +271,14 @@ void combine(SystemView<N> o, SystemView<N> x, SystemView<N> y, SystemView<N> k,
   must be **compile-time** (concept, not virtual) so the structured path inlines to plain
   index arithmetic (zero-cost); must encode the unstructured **no-scatter double-visit**
   race pattern.
+- **Concept, not a base class; siblings, not parent/child.** Do NOT model structured as a
+  *subclass* of unstructured. Two reasons: (1) a virtual `Mesh` base = device dispatch inside
+  the flux = forbidden (prime directive); (2) even non-virtually, making the structured grid a
+  *special case* of unstructured forces the fast path to carry connectivity tables it doesn't
+  need — indirection where `i±1` suffices — the performance inversion (and the "special case"
+  actually has *less* state, so it doesn't fit inheritance anyway). `CartesianMesh` and
+  `TriMesh` are **independent** models of one `Mesh` concept: structured *computes* geometry
+  (inlined, zero storage), unstructured *reads* it (tables). The compiler monomorphizes each.
 - **For turbochook now (structured only, §11):** flow geometry into the flux via a small
   accessor, **not raw `p.dx`/`p.dy`**, so the Mesh seam *exists* without the second backend.
   Leave the seam; don't build it.
