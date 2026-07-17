@@ -7,7 +7,29 @@ and clean architecture over feature count.
 
 > **Read [`docs/DESIGN.md`](docs/DESIGN.md) before writing any code** — it is the settled
 > architecture (the prime directive, the three-layer split, the ADRs, the code skeletons).
+> [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) is the `lib/core/` layer (directory layout +
+> logger + error handling, with reference implementations).
 > [`docs/ROADMAP.md`](docs/ROADMAP.md) is the milestone ladder; do them in order.
+
+## Directory layout (where things go matters)
+
+`lib/` is the library, header-first. `lib/core/` is the physics-free foundation (turbochook's
+`pic` equivalent: `types.hpp`, `log.hpp`, `error.hpp`, `arena.hpp`, `timer.hpp`) — depends on
+nothing but the stdlib; everything depends on it. Above it: `lib/mesh`, `lib/physics`,
+`lib/numerics`, `lib/bc`, `lib/io`. Thin `main`s in `app/`, host-serial tests in `tests/`.
+Single flat `tc` namespace; `lib/` on the include path (`#include "core/log.hpp"`). Full tree
++ the dependency rule in [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md).
+
+## Logging & errors
+
+- **Logging** = `tc::logger()` (C++23 `std::format`/`std::print`, level-gated, compile-time-
+  checked format strings). **Host-only** — never log from a kernel; device code signals via a
+  flag/NaN buffer the host reduces.
+- **Errors** = `tc::Result<T>` (`std::expected<T, tc::Error>`); `Error` carries a
+  `std::source_location`. Host ops propagate monadically and `tc::report()` + exit at the
+  driver boundary. Fail-loud, fail-early (bad config/scheme dies at setup). Device failures
+  become an `Error` via a post-step host reduction (NaN/CFL guards). Exceptions only for
+  `bad_alloc`/unrecoverable I/O; the hot loop never throws.
 
 ## The prime directive (non-negotiable)
 
