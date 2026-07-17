@@ -307,12 +307,28 @@ void combine(SystemView<N> o, SystemView<N> x, SystemView<N> y, SystemView<N> k,
 
 ## 10. Testing
 
-Analytical tests are the highest-leverage thing here (every one caught a real bug in
-Rakali). Kernels are pure free functions over views ⇒ testable on host with
-`std::execution::seq`. Target cases: **dam-break** (vs exact SWE Riemann solution),
-**lake-at-rest** (well-balancedness — flat stays flat), **radial-symmetry** of a Gaussian
-drop, and **conservation** (total mass drift ~ machine eps). Add a test before or with each
-kernel.
+**Framework: doctest** (single-header, fetched via CMake `FetchContent`, fastest compiles) —
+one runner through **CTest** (matches the Rakali muscle memory). Two tiers:
+
+- **Unit** — instantiate a few cells, call one kernel, assert against hand-computed values.
+  Kernels are pure free functions over views ⇒ testable on host with `std::execution::seq`.
+  (`tc::Vec` ops, `phys_flux_x`, `wave_speeds`, `Arena`, the `Profiler` self-time math.)
+- **Analytical** — the highest-leverage class (every one caught a real bug in Rakali):
+  **dam-break** (vs exact SWE Riemann), **lake-at-rest** (well-balanced — flat stays flat),
+  **radial-symmetry** of a Gaussian drop, **conservation** (total-mass drift ~ machine eps).
+
+Add a test with (or before) each kernel. Float asserts use a tolerance (`doctest::Approx`).
+
+**The execution-policy seam** (so host tests need no TBB): `lib/numerics/parallel.hpp` defines
+`tc::par` = `std::execution::par_unseq` normally, but `std::execution::seq` under the
+`TC_STDPAR_OFF` define (the host build). `for_each_cell` uses `tc::par`. → the GPU/multicore
+builds offload; the host-serial test build is deterministic and dependency-free.
+
+**GPU testing rule (CPU-green ≠ GPU-correct — the Rakali lesson):** the suite compiles in all
+three configs. CI runs the host-serial suite (fast); **additionally run the analytical suite
+under the `-stdpar=gpu` build periodically** — that is what catches offload/data-motion bugs a
+host run is blind to. Never `ctest -jN` on the GPU build (workers share one GPU → spurious
+failures).
 
 ## 11. Non-goals (for now)
 

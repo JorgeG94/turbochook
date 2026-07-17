@@ -7,13 +7,20 @@ gate. See [`DESIGN.md`](DESIGN.md) for the architecture every milestone must obe
 
 Goal: prove the build + GPU offload before any physics.
 
-- CMake project, C++23, the three build configs (gpu / multicore / host-serial).
-- A `saxpy` and a `std::transform_reduce` over a big array via `par_unseq`.
+- CMake project (the `CMakeLists.txt` sketch exists), C++23, the three build configs
+  (`TC_STDPAR` = gpu / multicore / off).
+- `lib/numerics/parallel.hpp` — the `tc::par` execution-policy seam (`par_unseq`, or `seq`
+  under `TC_STDPAR_OFF`) + `for_each_cell`.
+- A `saxpy` and a `std::transform_reduce` over a big array via `tc::par`.
+- **doctest wired via CTest** (`FetchContent` + `doctest_discover_tests`) with one trivial
+  passing test, so the test harness is proven before any physics.
 - Confirm GPU offload with **nsys** (kernels appear in the timeline) — not just "it ran".
-- `std::mdspan` availability check (real `std::` or vendored `kokkos/mdspan`).
+- `std::mdspan` / `std::print` availability check (real `std::` or vendored `kokkos/mdspan`
+  / logger fallback) — depends on nvc++'s stdlib, so verify here.
 
-**Acceptance:** builds in all three configs; the GPU config shows kernels in nsys; the
-reduction result matches the serial result. *No solver yet — this is the de-risking step.*
+**Acceptance:** builds in all three configs; `ctest` green (host); the GPU config shows
+kernels in nsys; the reduction result matches the serial result. *No solver yet — de-risk the
+toolchain, the offload, AND the test harness.*
 
 ## M1 — 2D scalar field on a Cartesian grid
 
