@@ -114,8 +114,38 @@ zero overhead. Runtime config (a namelist/CLI string) bridges to the compile-tim
 correct templated kernel. One binary, no virtuals, every scheme fully inlined.
 
 ### ADR-5 — Value type baseline
-`std::array<Real,N>` now (zero machinery, generic, readable via bindings); `Vec<N>` later
-when flux math earns operators. See ADR-2.
+`tc::Vec<N>` (home-baked, `std::array`-backed) is the per-cell/per-layer value type; readable
+via structured bindings, generic via `[]`. Introduced at M3 (layers); the M2 barotropic PoC is
+scalar-per-face and needs no Vec. See ADR-2 / §7.
+
+### ADR-6 — Generalized vertical coordinate (ALE) is the *shape* of the core, not a bolt-on
+
+The ocean core is **thickness-based, Lagrangian-then-remap** from the ground up (MOM6/Rakali
+ALE). This is a structural commitment — retrofitting it means restructuring the state, the
+stepper, and every operator. It lives in **three places**, not one "base concept":
+
+1. **State (data shape):** layer thickness `h_layer` is the **prognostic** vertical variable;
+   z-interfaces are **diagnostic** (`z(k) = −H + Σ_{k'<k} h`, a `z_from_h` helper). **No fixed
+   z-levels are stored.** This is what "GVC lives in the ocean state" means — the *shape*, not a
+   coordinate object.
+2. **Stepper (a step):** the loop advances layers freely (Lagrangian — they distort), then at
+   the remap cadence regrids to the target. The `Integrator` carries a **remap hook**
+   (cadence-gated, cf. Rakali `is_thermo_step`).
+3. **Policies (two composable axes):** `Vcoord` (target-thickness generator: z*/sigma/rho/
+   hybrid — a module slot, == Rakali `ocean_vcoord_t`) × `Reconstruction` (the conservative
+   remap kernel — the **same** policy continuity + tracers use; PORTING_MAP §1, §8).
+
+**Load-bearing consequence — design for vanishing layers from day one.** A general coordinate
+means layers can vanish (h→0: z* thinning, isopycnal outcrop). Every operator that divides by
+`h` must carry the thin-layer guard (`H_VANISHED` = dynamic-vanish skip/merge vs `H_DIV_EPS` =
+pure 1/0 armour — Rakali constants of record) from the start. This is Bucket-2 (carries from
+Rakali) and is the single discipline separating "GVC-ready" from "GVC-retrofit-nightmare".
+**No uniform-`dz` assumptions anywhere.**
+
+**Scope:** M2 (barotropic, single layer) → GVC is degenerate (nothing to remap). "Design with
+it in mind" = shape the **M3** layered state (thickness-prognostic), operator interfaces (take
+arbitrary `h_layer`, tolerate vanishing), and the stepper (remap hook) so the ALE remap drops
+in at **M4** with zero retrofit. Build the seam at M3; build the remap at M4.
 
 ## 5. The compile-time policy axes (the payoff)
 

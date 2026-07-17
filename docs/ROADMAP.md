@@ -66,6 +66,11 @@ lesson). A stacked-shallow-water **2-layer Phillips** model.
 
 - Second layer; per-layer thickness + the co-located tracer path (`SystemView<N>`, S/T at
   centres); `PGF = gprime` (2-layer reduced gravity); barotropic/baroclinic split proper.
+- **ALE-ready state (DESIGN ADR-6):** `h_layer` is the prognostic vertical variable (z
+  diagnostic via `z_from_h`, no fixed levels); every operator takes arbitrary layer thickness
+  and tolerates **vanishing layers** (`H_VANISHED` guard) from the start — no uniform-`dz`
+  assumptions. The stepper gets a (cadence-gated) **remap hook**. The remap kernel itself is
+  M4; here we build the *seam* so ALE drops in with zero retrofit.
 - Certify with a 2-layer baroclinic channel that spins up eddies.
 
 **Acceptance:** a baroclinic channel goes unstable and produces eddies at the right scale;
