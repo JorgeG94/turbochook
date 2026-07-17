@@ -1,0 +1,13 @@
+# build trees
+build*/
+# scratch
+tmp/
+*.o
+*.out
+# editor
+.vscode/
+.idea/
+# data dumps
+*.bin
+*.csv
+*.nc
