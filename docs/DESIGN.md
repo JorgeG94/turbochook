@@ -10,8 +10,17 @@ A GPU-native, from-scratch C++23 finite-volume solver for coastal/ocean flows, b
 **ISO C++ standard parallelism** — `std::for_each(std::execution::par_unseq, …)` compiled
 with `nvc++ -stdpar=gpu`. It re-implements the architecture of the Rakali Fortran solver
 (`../rakali_dc`) in idiomatic modern C++, as a learning exercise for very-modern-C++ +
-GPU compute. First target: 2D shallow-water (SWE). Designed so 3D, Euler, and other
-equation sets slot in **without touching compute kernels**.
+GPU compute.
+
+**North star — the ocean dynamical core.** An Arakawa **C-grid**, continuity-PPM,
+PV-conserving-Coriolis, split-explicit hydrostatic ocean model (Rakali's `sim_type='ocean'`
+core, re-cast in C++). **Proof-of-concept on-ramp: a 2D C-grid *barotropic* shallow-water
+solver** — which *is* the ocean core's fast mode (the core minus stratification), so the PoC
+doubles as the foundation and nothing is thrown away. This deliberately targets the C-grid /
+split-explicit **ocean** regime, **not** the coastal HLL/HLLC **Godunov** regime — a
+Riemann-solver SWE would build the wrong engine. Layers, EOS, vertical coordinates, and
+vertical mixing slot in *on top* of the barotropic foundation (roadmap M3+) without
+re-touching it.
 
 Rakali's model is `do concurrent` + let NVHPC offload it. C++ stdpar is the same idea from
 the same vendor/runtime — this port is a translation between two ISO-standard parallel
@@ -108,20 +117,27 @@ correct templated kernel. One binary, no virtuals, every scheme fully inlined.
 `std::array<Real,N>` now (zero machinery, generic, readable via bindings); `Vec<N>` later
 when flux math earns operators. See ADR-2.
 
-## 5. The orthogonal policy axes (the payoff)
+## 5. The compile-time policy axes (the payoff)
 
-Four **independent** compile-time axes that compose. This is what's painful in Fortran and
-natural in modern C++:
+Independent compile-time axes that compose — painful in Fortran, natural via C++ concepts.
+These are the **ocean-core** operators (NOT a Godunov `RiemannSolver` — that's the coastal
+regime we are *not* building). The barotropic PoC (M2) exercises the **top subset** (grid +
+continuity + Coriolis + PGF + integrator + BC); layers/EOS/vcoord/vmix arrive M3+:
 
 | Axis | Concept | Examples | Swapping it touches… |
 |---|---|---|---|
-| Physics | `EquationSet` | SWE, Euler | only the EquationSet |
-| Numerics | `RiemannSolver<E>` | HLL, HLLC, Rusanov | only the solver |
-| Time | `Integrator` | Fwd-Euler, SSP-RK2, RK3 | only the integrator |
-| Boundary | `BC` | reflective, periodic | only the BC fill kernel |
+| Grid / mesh | `Mesh` | Cartesian (later tripolar, unstructured) | only the Mesh |
+| Continuity | `Continuity` | PPM thickness flux | only continuity |
+| Coriolis | `Coriolis` | Sadourny PV-enstrophy, energy form | only Coriolis |
+| Pressure gradient | `PGF` | Montgomery, FV, gprime (2-layer) | only the PGF |
+| Time | `Integrator` | Fwd-Euler, SSP-RK2 (+ barotropic/baroclinic split) | only the integrator |
+| Boundary | `BC` | wall, periodic, Flather | only the BC fill |
+| Vert. coord (M4) | `Vcoord` | sigma, z*, ALE remap | only the remap |
+| Vert. mixing (M5) | `Vmix` | PP81, KPP | only vmix |
 
-`EquationSet` supplies `Cons`, `Flux`, `phys_flux_{x,y}`, `wave_speeds_{x,y}`, `contact_{x,y}`
-(HLLC), and `static constexpr int N`. `RiemannSolver<E>` is generic over any `EquationSet`.
+Each is a compile-time policy; the dispatch bridge (ADR-4) maps a runtime config string to
+the chosen instantiation — the same pattern as Rakali's `&ocean_*_nml` + enum dispatch, but
+resolved at compile time.
 
 ## 6. Key type skeletons (the settled design, in code)
 
@@ -155,7 +171,9 @@ public:
 };
 
 // ── the boundary: POD view bundle + params, captured BY VALUE ──
-template <int N> struct SystemView { std::array<Field2, N> q; };   // SoA, indexable
+template <int N> struct SystemView { std::array<Field2, N> q; };   // co-located SoA at CENTRES
+                                                                   // (e.g. tracers S/T later)
+                                                                   // barotropic momentum is STAGGERED — see BaroState (§6)
 struct Params { int nx, ny; Real dx, dy, dt, g; };
 
 // ── the iteration abstraction (reliably-offloading idiom) ──
@@ -166,76 +184,40 @@ void for_each_cell(int nx, int ny, F f) {
                   [=](int n) { f(n % nx /*fast axis*/, n / nx); });
 }
 
-// ── ADR-4/5: physics axis — an EquationSet ──
-template <class E>
-concept EquationSet = requires(typename E::Cons L, typename E::Cons R, Real g) {
-    { E::phys_flux_x(L, g)    } -> std::same_as<typename E::Flux>;
-    { E::wave_speeds_x(L,R,g) } -> std::same_as<std::pair<Real,Real>>;
+// ── The physics: an Arakawa C-GRID, split-explicit ocean core (NOT Godunov/Riemann) ──
+// State is STAGGERED, so instead of a co-located SystemView<N> the barotropic state is a
+// bundle of views, each on its OWN grid:
+struct BaroState {
+    Field2 eta;   // (nx,   ny  )   cell CENTRES  (sea-surface height / free-surface thickness)
+    Field2 u;     // (nx+1, ny  )   x-FACES
+    Field2 v;     // (nx,   ny+1)   y-FACES
 };
 
-struct SWE {
-    static constexpr int N = 3;
-    using Cons = std::array<Real, N>;   // {h, hu, hv}
-    using Flux = std::array<Real, N>;
-    static Flux phys_flux_x(Cons q, Real g) {
-        auto [h, hu, hv] = q; Real u = hu / h;
-        return { hu, hu*u + 0.5*g*h*h, hv*u };
-    }
-    static std::pair<Real,Real> wave_speeds_x(Cons L, Cons R, Real g); // sL, sR
-    // + phys_flux_y, wave_speeds_y, contact_x/y (HLLC)
-};
-
-// ── numerics axis — a Riemann solver, generic over any EquationSet ──
-template <EquationSet E>
-struct HLL {
-    using Cons = typename E::Cons; using Flux = typename E::Flux;
-    static Flux flux_x(Cons L, Cons R, Real g) {
-        auto [sL, sR] = E::wave_speeds_x(L, R, g);
-        if (sL >= 0) return E::phys_flux_x(L, g);
-        if (sR <= 0) return E::phys_flux_x(R, g);
-        Flux FL = E::phys_flux_x(L,g), FR = E::phys_flux_x(R,g), out;
-        Real inv = 1.0 / (sR - sL);
-        for (int v = 0; v < E::N; ++v)                     // N-generic
-            out[v] = (sR*FL[v] - sL*FR[v] + sL*sR*(R[v] - L[v])) * inv;
-        return out;
-    }
-    // HLLC adds a contact-wave correction across E::contact_x — same shape.
-};
-
-// ── spatial operator L: fills tendency K = -div(F(U)) ──
-template <EquationSet E, template<class> class Riemann>
-void rhs(SystemView<E::N> U, SystemView<E::N> K, Params p) {
-    for_each_cell(p.nx, p.ny, [=](int i, int j) {
-        if (i==0 || i==p.nx-1 || j==0 || j==p.ny-1) return;   // interior only (ghosts filled by BC)
-        auto gather = [&](int ii, int jj){ typename E::Cons c;
-            for (int v=0; v<E::N; ++v) c[v] = U.q[v][ii,jj]; return c; };
-        auto C = gather(i,j);
-        auto fe = Riemann<E>::flux_x(C, gather(i+1,j), p.g), fw = Riemann<E>::flux_x(gather(i-1,j), C, p.g);
-        auto fn = Riemann<E>::flux_y(C, gather(i,j+1), p.g), fs = Riemann<E>::flux_y(gather(i,j-1), C, p.g);
-        Real ix = 1/p.dx, iy = 1/p.dy;
-        for (int v = 0; v < E::N; ++v)                     // N-generic scatter
-            K.q[v][i,j] = -((fe[v]-fw[v])*ix + (fn[v]-fs[v])*iy);
-    });
+// The RHS is a SUM OF OPERATOR TENDENCIES, not the divergence of a Riemann flux. Each
+// operator is a compile-time policy (§5), writing into a matching tendency BaroState:
+//   ∂η/∂t = -∇·(H u)                      [Continuity : PPM thickness flux, on centres]
+//   ∂u/∂t = -g ∂η/∂x + (f v)|u + adv      [PGF + PV-conserving Coriolis, on faces]
+//   ∂v/∂t = -g ∂η/∂y - (f u)|v + adv
+template <Continuity Cont, Coriolis Cor, PGF Pgf>
+void baro_rhs(BaroState s, BaroState k, Params p) {
+    Cont::apply(s, k, p);   // η tendency + thickness fluxes   (for_each_cell over centres)
+    Pgf ::apply(s, k, p);   // -g grad(η) into u, v            (for_each_face)
+    Cor ::apply(s, k, p);   // PV-conserving Coriolis + advection into u, v
 }
+// The continuity-PPM / PV-Coriolis / FV-PGF *formulae* are the ocean core's. Rakali's
+// src/core/ocean/ is the authoritative reference — port the numerics (the algorithm), not
+// the source. `for_each_face` is the staggered-grid twin of `for_each_cell`.
 
-// ── the RK combine (over STORAGE — always N-generic, value type irrelevant) ──
-template <int N>
-void combine(SystemView<N> o, SystemView<N> x, SystemView<N> y, SystemView<N> k,
-             Real a, Real b, Real c, Params p) {
-    for_each_cell(p.nx, p.ny, [=](int i, int j) {
-        for (int v = 0; v < N; ++v)
-            o.q[v][i,j] = a*x.q[v][i,j] + b*y.q[v][i,j] + c*p.dt*k.q[v][i,j];
-    });
-}
+// ── RK combine — per staggered field (each on its own grid extent) ──
+void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o = a·x + b·y
+// SSP-RK2 (Heun) applied to each of {eta, u, v}. The split-explicit structure — many fast
+// barotropic substeps per slow baroclinic step — lives in the Integrator (M2+).
 
-// ── time axis: SSP-RK2 (Heun). Reads like the math. ──
-// K = L(U);      U1 = U + dt*K
-// K = L(U1);     U^{n+1} = 1/2 U + 1/2 U1 + 1/2 dt*K
-//   (fill_ghosts before each rhs)
+// ── runtime → compile-time bridge (host side, ADR-4) ──
+// std::visit picks Continuity / Coriolis / PGF instantiations from config strings — the
+// compile-time twin of Rakali's &ocean_*_nml enum dispatch. One binary, no virtuals.
 
-// ── runtime → compile-time bridge (host side) ──
-// using FluxChoice = std::variant<HLL<SWE>, Rusanov<SWE>>;
-// std::visit([&](auto solver){ rhs<SWE, decltype(solver)::template rebind>(…); }, choice);
+// (Co-located tracers S/T ride the SystemView<N> path at centres — arrives with M3 layers.)
 
 } // namespace tc
 ```
@@ -345,6 +327,8 @@ failures).
 
 ## 11. Non-goals (for now)
 
-Unstructured grids, MPI, implicit solvers, AMR. The architecture leaves seams (custom
-mdspan layouts, the arena, the policy axes) but we do not build for them yet. 2D structured
-SWE end-to-end is the near-term goal.
+Unstructured grids, MPI, implicit solvers, AMR, the coastal Godunov regime. The architecture
+leaves seams (custom mdspan layouts, the arena, the policy axes, the `Mesh` seam) but we do
+not build for them yet. **Near-term goal: a 2D C-grid barotropic SWE (the ocean core's fast
+mode).** North star: the full ocean dynamical core (§1) — a multi-month+ arc, climbed one
+roadmap rung at a time.

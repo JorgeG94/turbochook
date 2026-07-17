@@ -1,9 +1,14 @@
-# TurboChook — GPU-Native C++23 Coastal/Ocean Solver
+# TurboChook — GPU-Native C++23 Ocean Dynamical Core
 
-A from-scratch finite-volume solver on **ISO C++ standard parallelism**
+A from-scratch ocean dyn-core on **ISO C++ standard parallelism**
 (`std::execution::par_unseq` + `nvc++ -stdpar=gpu`). Architectural port of the Rakali
-Fortran solver (`../rakali_dc`) into idiomatic modern C++. Learning-focused; correctness
-and clean architecture over feature count.
+Fortran **ocean core** (`../rakali_dc`, `sim_type='ocean'`) into idiomatic modern C++.
+Learning-focused; correctness and clean architecture over feature count.
+
+**North star:** Arakawa **C-grid**, continuity-PPM, PV-conserving-Coriolis, split-explicit
+hydrostatic ocean. **PoC on-ramp:** a 2D C-grid *barotropic* shallow-water solver (the core's
+fast mode — the PoC *is* the foundation). This targets the C-grid/split-explicit **ocean**
+regime, **not** the coastal HLL/HLLC Godunov regime — do not build a Riemann-solver SWE.
 
 > **Read [`docs/DESIGN.md`](docs/DESIGN.md) before writing any code** — it is the settled
 > architecture (the prime directive, the three-layer split, the ADRs, the code skeletons).

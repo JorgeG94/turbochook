@@ -36,37 +36,50 @@ Goal: the data model + iteration + time loop, end to end, on the simplest PDE.
 **Acceptance:** converges at the expected order; conserves the scalar to ~machine eps;
 runs on GPU and host-serial with matching results.
 
-## M2 — 2D shallow-water (the real target)
+## M2 — C-grid barotropic shallow-water (the PoC = the ocean core's foundation)
 
-Goal: a genuine Rakali analog.
+Goal: the proof-of-concept, and *not* a throwaway — this **is** the ocean core's barotropic
+(fast) mode, so everything here is load-bearing for the north star.
 
-- `EquationSet SWE` (N=3), `RiemannSolver` = **HLL first, then HLLC** (add the contact
-  correction; consider the `Vec<N>` upgrade here for the star-state math).
-- SSP-RK2 integrator (as an `Integrator` policy — open decision #2).
-- Boundaries: **reflective** + **periodic** as `BC` policies with halo-row fill (open
-  decision #3).
-- Runtime→compile-time dispatch via `variant`/`visit` for the flux choice.
-- Test cases (DESIGN §10): **dam-break vs exact Riemann**, **lake-at-rest**
-  (well-balanced), **radial symmetry** of a Gaussian drop, **mass conservation**.
+- **Arakawa C-grid** staggered `BaroState` (η centres, u/v faces) from the Arena.
+- Operators as compile-time policies (DESIGN §5): **`Continuity`** (PPM thickness flux),
+  **`Coriolis`** (Sadourny PV-conserving), **`PGF`** (`-g ∇η`). Port the numerics from
+  Rakali `src/core/ocean/`; the algorithm, not the source.
+- **Split-explicit** time integration (`Integrator` policy: fast barotropic substeps) — start
+  with a single explicit forward-backward if that's simpler, build to the split.
+- Boundaries: **wall** + **periodic** as `BC` policies, halo-row fill before each stage
+  (branch-free interior — decision #3).
+- `Vec<N>` not needed yet (barotropic is scalar-per-face); introduce with M3 layers.
+- Test cases (DESIGN §10, ocean-appropriate — NOT dam-break): **geostrophic adjustment**,
+  **lake-at-rest** (well-balanced — flat η stays flat), a **Kelvin/Rossby wave**, **mass
+  conservation**.
 
-**Acceptance:** dam-break matches the exact SWE Riemann solution within scheme tolerance;
-lake-at-rest stays flat (well-balanced); Gaussian drop stays radially symmetric; total mass
-drift ~ machine eps; GPU offload confirmed in nsys.
+**Acceptance:** geostrophic adjustment reaches the correct balanced state; lake-at-rest stays
+flat; the wave propagates at the right speed; total mass drift ~ machine eps; GPU offload
+confirmed in nsys. This rung proves the C-grid + split-explicit machinery — the hard part.
 
-## M3 — Consolidate the architecture
+## M3 — Two layers → baroclinic instability (the "it's a real ocean model" rung)
 
-Goal: prove the seams.
+Goal: make **eddies from physics, not numerics** (the Rakali `ocean_eddy_certification`
+lesson). A stacked-shallow-water **2-layer Phillips** model.
 
-- Swap the owning `Field` for the **Arena** (open decision #4: a `Workspace` owning
-  `U`/`U1`/`K`) — **zero kernel changes** (the proof the boundary holds).
-- Add a second `Integrator` (Fwd-Euler or RK3) — flux untouched.
-- (Optional) `Vec<N>` upgrade if not already done.
+- Second layer; per-layer thickness + the co-located tracer path (`SystemView<N>`, S/T at
+  centres); `PGF = gprime` (2-layer reduced gravity); barotropic/baroclinic split proper.
+- Certify with a 2-layer baroclinic channel that spins up eddies.
 
-**Acceptance:** Arena swap-in changes no kernel; results bit-stable vs M2; a second
-integrator drops in without touching flux/physics.
+**Acceptance:** a baroclinic channel goes unstable and produces eddies at the right scale;
+energy/enstrophy behave; GPU-stable over a long run.
 
-## Later (not scheduled)
+## M4 — EOS + FV pressure gradient + a vertical coordinate
 
-- `EquationSet Euler` (N=4) to exercise N-genericity.
-- 3D (`Field<3>`), custom mdspan layouts (AoSoA), more BCs.
-- These are explicitly out of near-term scope — see DESIGN §11.
+- Nonlinear EOS; FV-PGF; a `Vcoord` policy (sigma / z* / ALE remap).
+
+## M5 — Vertical mixing
+
+- `Vmix` policy: PP81 interior → KPP boundary overlay.
+
+## Later (the long arc toward full parity)
+
+- More layers, more vcoords, tides, real forcing, tripolar/unstructured `Mesh`. This is a
+  multi-month+ arc — Rakali's ocean core is enormous (see its CLAUDE.md). Climb one rung at a
+  time; a stable GPU baroclinic core is already a serious result.
