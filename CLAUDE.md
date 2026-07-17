@@ -17,6 +17,8 @@ regime, **not** the coastal HLL/HLLC Godunov regime — do not build a Riemann-s
 > [`docs/ROADMAP.md`](docs/ROADMAP.md) is the milestone ladder; do them in order.
 > [`docs/PORTING_MAP.md`](docs/PORTING_MAP.md) maps each ocean algorithm to the exact Rakali
 > `src/core/ocean/` file→module→procedure to port it from (port the algorithm, not the source).
+> [`docs/LESSONS_FROM_RAKALI.md`](docs/LESSONS_FROM_RAKALI.md) — which Rakali design was
+> Fortran-tax (C++ erases it) vs GPU-fundamental (carries over unchanged — do NOT "fix" it).
 
 ## Directory layout (where things go matters)
 
