@@ -240,18 +240,40 @@ void combine(SystemView<N> o, SystemView<N> x, SystemView<N> y, SystemView<N> k,
 } // namespace tc
 ```
 
-## 7. Open decisions (resolve during implementation)
+## 7. Decisions (resolved) + the dimension/mesh seam
 
-1. **Value type `array` vs `Vec<N>`** — array baseline (ADR-5); add `Vec<N>` (operators +
-   tuple protocol for structured bindings) when HLLC math earns it. Drop-in.
-2. **Integrator: concept-struct vs free functions** — recommend a `struct SSPRK2 { static
-   void advance(...); }` matching an `Integrator` concept, for the same swappability the
-   flux has.
-3. **Ghosts** — recommend halo rows inside each field (`nghost`, Rakali-style) filled by a
-   `BC` kernel each stage; keeps the interior kernel branch-free (drop the boundary `if` in
-   `rhs`).
-4. **System vs Workspace ownership** — recommend a `Workspace` type that owns all registers
-   (`U`, `U1`, `K`) allocated from the Arena; `System<N>` is just one register.
+1. **Value type — `tc::Vec<N>`** (home-baked, `std::array`-backed, eager, trivially copyable;
+   glm-style, NOT Eigen/`std::vector` — see FOUNDATIONS §2b). `Cons`/`Flux` are per-
+   `EquationSet` aliases of it. Introduced at **M2** (SWE); M1's scalar field needs no Vec.
+2. **Integrator — a policy `struct`** (e.g. `SSPRK2`) matching an `Integrator` concept. The
+   concept is over `(Workspace&, RhsOp, BcOp, Params)` and knows **nothing** of physics/flux
+   — it only calls the RHS op + `combine`s. Hand-code the SSP stages (not a Butcher engine).
+   Declares `static constexpr int n_scratch` so the Workspace sizes its register set.
+3. **Ghosts — halo rows inside each field.** `nghost` is a **property of the reconstruction/
+   scheme** (`Scheme::nghost`; =1 for HLL/HLLC, =2 for MUSCL later). A `BC` kernel fills them
+   **before each RK stage's `rhs`** → the interior kernel is **branch-free** (no boundary
+   `if`). 0-based; interior = `[nghost, nghost+n)`.
+4. **Workspace owns registers.** A `Workspace` allocates `U + n_scratch` registers from the
+   Arena; `System<N>` is one register. Ping-pong lives inside `Integrator::advance`; the flux
+   only ever sees a `SystemView`.
+
+### The dimension vs mesh seam — what templating actually buys
+
+- **Templating over spatial `Rank` (2D↔3D, structured)** is largely free: `Field<Rank>`,
+  `Vec<N>`, a dimension-generic stencil. Do it.
+- **Structured ↔ unstructured is a DIFFERENT axis** — connectivity/iteration, not dimension;
+  a `Rank` template does not get you triangles. What is shared for free is the **physics**
+  (`EquationSet` + `RiemannSolver`); what differs is **iteration + connectivity**. (Rakali
+  proves it: shared physics modules, *separate* structured/unstructured flux kernels.)
+- **Unification path (deferred):** a `Mesh`/topology **concept** + `for_each_face(mesh, …)`
+  handing the flux a `FaceView{left, right, normal, area}`. Structured computes it from
+  `(i,j)`; unstructured reads connectivity tables → the flux becomes mesh-agnostic. Caveats:
+  must be **compile-time** (concept, not virtual) so the structured path inlines to plain
+  index arithmetic (zero-cost); must encode the unstructured **no-scatter double-visit**
+  race pattern.
+- **For turbochook now (structured only, §11):** flow geometry into the flux via a small
+  accessor, **not raw `p.dx`/`p.dy`**, so the Mesh seam *exists* without the second backend.
+  Leave the seam; don't build it.
 
 ## 8. GPU hard rules (kernel-authoring checklist)
 

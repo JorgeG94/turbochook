@@ -82,6 +82,11 @@ ctest --test-dir build-host --output-on-failure
   functions/variables/methods `snake_case` (`for_each_cell`, `phys_flux_x`); template
   params `PascalCase`; namespace `tc`; physical constants `UPPER_SNAKE`
   (`inline constexpr Real GRAVITY = 9.81`). Files `snake_case.hpp` / `.cpp`.
+- **No `using namespace`** (not `std`, not `tc`). Fully-qualify *named* entities: `std::`
+  always, and `tc::` from outside the namespace (`tc::Vec<3>`, never a bare `Vec` or the
+  stuttering `tc::tcVec`). **Operators are exempt** — they resolve by ADL, so write `a + b`
+  for two `tc::Vec`, and `dot(a,b)` / structured-binding `get` likewise; never
+  `tc::operator+`.
 - **Header-only** for templated device code (definitions must be visible at the call site).
 - `#include` what you use; prefer `<algorithm>`/`<numeric>`/`<execution>`/`<mdspan>`/`<span>`
   /`<array>`/`<ranges>` std facilities over hand-rolled loops where they offload.

@@ -15,6 +15,7 @@ turbochook/
 ├── lib/                          # the library
 │   ├── core/                     # FOUNDATION — zero physics. The "pic" of turbochook.
 │   │   ├── types.hpp             # Real, Index, Field<Rank> = mdspan<layout_left>, aliases
+│   │   ├── vec.hpp               # tc::Vec<N> — fixed-size numeric vector (glm-style; NOT std::vector/Eigen)
 │   │   ├── log.hpp               # Logger (std::format/std::print), levels, global accessor
 │   │   ├── error.hpp             # Error, Result<T> = std::expected<T,Error>, source_location
 │   │   ├── arena.hpp             # the memory arena (DESIGN ADR-3)
@@ -56,6 +57,65 @@ using Field2 = Field<2>;
 using Field3 = Field<3>;
 } // namespace tc
 ```
+
+## 2b. `core/vec.hpp` — the fixed-size numeric vector (`tc::Vec<N>`)
+
+The per-cell value type (`Cons`/`Flux` = N conserved variables). **Home-baked, and NOT
+`std::vector`** (which is heap/dynamic and illegal in a kernel). Model it on **glm** (eager,
+GPU/kernel-safe fixed vec/mat), **not Eigen** — we deliberately omit Eigen's machinery:
+
+- **No expression templates.** For N=3–4 the compiler unrolls trivially; expression templates
+  bring gnarly device codegen + the `auto x = a + b;` dangling-reference footgun. Eager,
+  by-value evaluation only.
+- **Trivially copyable by construction** (a single `std::array<Real,N>` member) — the whole
+  point, so it captures by value into a `par_unseq` lambda with zero fuss. (Eigen's alignment
+  attributes / `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` baggage is exactly what we avoid.)
+- **Fixed-N only** — no dynamic sizing, no heap, ever.
+- **Scope discipline:** `Vec<N>` stays minimal (`[]`, `+`, `-`, `scalar*`, `dot`, structured
+  bindings). A `Mat<R,C>` is **deferred** until physics forces it (flux Jacobians for a Roe/
+  eigen-decomposition solver, or rotation matrices) — HLL/HLLC need none. Do **not** grow this
+  into a linear-algebra library.
+
+```cpp
+#pragma once
+#include <array>
+#include <cstddef>
+#include "core/types.hpp"      // Real
+
+namespace tc {
+
+template <int N>
+struct Vec {                   // aggregate; trivially copyable; brace-elision init: Vec<3>{a,b,c}
+    std::array<Real, N> d{};
+    constexpr Real  operator[](int i) const { return d[i]; }
+    constexpr Real& operator[](int i)       { return d[i]; }
+    static constexpr int size() { return N; }
+};
+
+template <int N> constexpr Vec<N> operator+(Vec<N> a, Vec<N> b) {
+    Vec<N> r; for (int i=0;i<N;++i) r[i]=a[i]+b[i]; return r; }
+template <int N> constexpr Vec<N> operator-(Vec<N> a, Vec<N> b) {
+    Vec<N> r; for (int i=0;i<N;++i) r[i]=a[i]-b[i]; return r; }
+template <int N> constexpr Vec<N> operator*(Real s, Vec<N> a) {
+    Vec<N> r; for (int i=0;i<N;++i) r[i]=s*a[i]; return r; }
+template <int N> constexpr Real dot(Vec<N> a, Vec<N> b) {
+    Real s=0; for (int i=0;i<N;++i) s+=a[i]*b[i]; return s; }
+
+// structured-binding support (tuple protocol) → `auto [h,hu,hv] = q;`
+template <std::size_t I, int N> constexpr Real get(const Vec<N>& v) { return v.d[I]; }
+
+} // namespace tc
+
+template <int N> struct std::tuple_size<tc::Vec<N>>
+    : std::integral_constant<std::size_t, N> {};
+template <std::size_t I, int N> struct std::tuple_element<I, tc::Vec<N>>
+    { using type = tc::Real; };
+```
+
+Usage: `EquationSet` aliases it (`using Cons = tc::Vec<3>;`); physics destructures
+(`auto [h,hu,hv] = q;`), generic code indexes (`q[v]`), and HLLC math reads like the formula
+(`(1/(sR-sL)) * (sR*FL - sL*FR + sL*sR*(R-L))`). Introduced at **M2** — M1's scalar field
+(N=1) doesn't need it. Operators resolve by ADL (never write `tc::operator+`).
 
 ## 3. `core/log.hpp` — the logger
 
