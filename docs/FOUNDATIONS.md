@@ -31,10 +31,10 @@ turbochook/
 └── CMakeLists.txt
 ```
 
-- **Namespace:** a single flat `tc` namespace (short call sites — `tc::HLL`, not
-  `tc::numerics::HLL`). Directories organise files, not namespaces.
+- **Namespace:** a single flat `tc` namespace (short call sites — `tc::Continuity`, not
+  `tc::physics::Continuity`). Directories organise files, not namespaces.
 - **Include path:** `lib/` is on the include path → `#include "core/log.hpp"`,
-  `#include "numerics/riemann.hpp"`. No deep `<turbochook/...>` prefix for a standalone repo.
+  `#include "physics/coriolis.hpp"`. No deep `<turbochook/...>` prefix for a standalone repo.
 - **Dependency rule:** `core/` depends on nothing but the stdlib. Everything depends on
   `core/`. Physics/numerics/bc never include each other's internals — they compose through
   the concepts in DESIGN §5.
@@ -73,7 +73,8 @@ GPU/kernel-safe fixed vec/mat), **not Eigen** — we deliberately omit Eigen's m
 - **Fixed-N only** — no dynamic sizing, no heap, ever.
 - **Scope discipline:** `Vec<N>` stays minimal (`[]`, `+`, `-`, `scalar*`, `dot`, structured
   bindings). A `Mat<R,C>` is **deferred** until physics forces it (flux Jacobians for a Roe/
-  eigen-decomposition solver, or rotation matrices) — HLL/HLLC need none. Do **not** grow this
+  eigen-decomposition solver, or rotation matrices) — the barotropic/PV-Coriolis operators
+  need none. Do **not** grow this
   into a linear-algebra library.
 
 ```cpp
