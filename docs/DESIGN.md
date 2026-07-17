@@ -223,6 +223,64 @@ void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o 
 } // namespace tc
 ```
 
+## 6b. The physics-module pattern (class-per-module, workspace-owning)
+
+Rakali's "a derived type per physics module" (`continuity_t`, `coriolis_adv_t`, …) maps to:
+**a physics module is a class that (a) owns its arena-backed workspace and (b) satisfies a
+per-module concept.** Each *scheme variant* is its own such class; the dispatch (ADR-4) chooses
+which fills the slot.
+
+```cpp
+template <class M>
+concept CoriolisModule = requires(M m, Arena& a, const Mesh& mesh, BaroState s, BaroState k, Params p) {
+    { m.init(a, mesh) };
+    { m.compute(s, k, p) };                 // adds the Coriolis tendency into k, using m's workspace
+};
+
+class SadournyEnstrophy {                   // == Rakali coriolis_adv_t (enstrophy path)
+    Field2 q_, fcor_;                       // persistent workspace, arena-backed
+public:
+    void init(Arena& a, const Mesh& m) { q_ = a.alloc2d<Real>(m.nx+1, m.ny+1); fcor_ = m.f_corner(); }
+    void compute(BaroState s, BaroState k, Params p) const {
+        Field2 q = q_, fcor = fcor_;        // HOIST members to locals — capture [=], NEVER `this`
+        for_each_corner(p, [=](int i,int j){ q[i,j] = (fcor[i,j]+zeta(s,i,j))/h_corner(s,i,j); });
+        for_each_face_x(p, [=](int i,int j){ k.u[i,j] += pv_flux_u(q,s,i,j); });
+        for_each_face_y(p, [=](int i,int j){ k.v[i,j] += pv_flux_v(q,s,i,j); });
+    }
+};
+```
+
+Rules:
+- **Workspace lives on the module, allocated from the Arena in `init`.** Because the arena is
+  managed memory, `init(Arena&)` subsumes Rakali's alloc **+ `enter_data`** — the whole
+  `ocean_state_enter_data` orchestrator (and its 150–1500× memcpy-explosion footgun) does not
+  exist here.
+- **`compute` hoists member views into locals, then the kernel captures `[=]` — never `this`.**
+  Direct analog of Rakali's "map the components, not the aggregate DT" + the
+  `!$acc update self(obj%arr_x, …)` rule.
+- **The god-state `OceanCore<Cont, Cor, Pgf, Integ>`** composes the chosen module classes
+  (== `ocean_state_t` slot map); `baro_rhs` = the sum of `module.compute(s, k)` calls.
+- **Dispatch:** `std::variant` / `std::visit` picks the variant class at config time
+  (== Rakali `&ocean_*_nml form=` + `parse_*_variant` + `select case`, made compile-time).
+
+### Continuity is generic over reconstruction — but PPM only, for now
+
+`Continuity<Reconstruction>` factors the shared FV flux-divergence from the swept-flux
+reconstruction (PPM parabola / WENO / PLM). **Build PPM only** (port from `PORTING_MAP.md` §1);
+PLM/WENO are drop-in later via the same concept — leave the seam, don't build it. The
+`Reconstruction` contract is load-bearing: **positivity-preserving + monotone** swept flux
+(thickness ≥ 0; you divide by h *everywhere*) — order of accuracy is secondary, and a WENO
+here must be the positivity-preserving flavour. The same `Reconstruction` also drives tracer
+advection later (thickness/tracer consistency), as in Rakali's `continuity_tracer_drain`.
+
+| Rakali | turbochook |
+|---|---|
+| `coriolis_adv_t` derived type | `class SadournyEnstrophy` (module = a class) |
+| `parse_*_variant` + `select case` | `std::variant` + `std::visit` (compile-time) |
+| `init` + `enter_data` | `init(Arena&)` — arena's managed memory replaces `enter_data` |
+| "map DT, touch components" / `update self(obj%arr)` | hoist members to locals, capture `[=]`, never `this` |
+| `ocean_state_t` slot map | `OceanCore<...>` composed of module classes |
+
 ## 7. Decisions (resolved) + the dimension/mesh seam
 
 1. **Value type — `tc::Vec<N>`** (home-baked, `std::array`-backed, eager, trivially copyable;
