@@ -21,8 +21,8 @@ turbochook/
 │   │   ├── arena.hpp             # the memory arena (DESIGN ADR-3)
 │   │   └── timer.hpp             # scoped wall-clock timing (profiler seed)
 │   ├── mesh/                     # grid extents, metrics, ghost/halo (0-based; interior = [nghost, nghost+n))
-│   ├── physics/                  # EquationSet policies (swe.hpp, …)
-│   ├── numerics/                 # parallel.hpp (for_each_cell), riemann.hpp, integrator.hpp
+│   ├── physics/                  # ocean operator policies (continuity.hpp, coriolis.hpp, pgf.hpp; eos.hpp @ M4)
+│   ├── numerics/                 # parallel.hpp (for_each_cell / for_each_face), integrator.hpp
 │   ├── bc/                       # boundary-condition policies
 │   └── io/                       # field dump, config parsing
 ├── app/                          # thin executables (swe2d.cpp wires config → solver → output)
@@ -112,10 +112,10 @@ template <std::size_t I, int N> struct std::tuple_element<I, tc::Vec<N>>
     { using type = tc::Real; };
 ```
 
-Usage: `EquationSet` aliases it (`using Cons = tc::Vec<3>;`); physics destructures
-(`auto [h,hu,hv] = q;`), generic code indexes (`q[v]`), and HLLC math reads like the formula
-(`(1/(sR-sL)) * (sR*FL - sL*FR + sL*sR*(R-L))`). Introduced at **M2** — M1's scalar field
-(N=1) doesn't need it. Operators resolve by ADL (never write `tc::operator+`).
+Usage: a per-layer state aliases it (`using Cons = tc::Vec<3>;`); physics destructures
+(`auto [h, s, t] = q;`), generic code indexes (`q[v]`), and vector math reads like the formula
+(`a*x + b*y`). Introduced at **M3** (layers) — the M2 barotropic PoC is scalar-per-face and
+doesn't need it. Operators resolve by ADL (never write `tc::operator+`).
 
 ## 3. `core/log.hpp` — the logger
 
@@ -256,10 +256,10 @@ public:
 Usage — host ops just throw; one handler at the driver:
 
 ```cpp
-FluxKind parse_flux(std::string_view s) {
-    if (s == "hll")  return FluxKind::hll;
-    if (s == "hllc") return FluxKind::hllc;
-    fail(Errc::unknown_scheme, std::format("unknown flux scheme '{}'", s));
+CoriolisKind parse_coriolis(std::string_view s) {
+    if (s == "enstrophy") return CoriolisKind::sadourny_enstrophy;
+    if (s == "energy")    return CoriolisKind::sadourny_energy;
+    fail(Errc::unknown_scheme, std::format("unknown coriolis scheme '{}'", s));
 }
 
 int main() try {
@@ -366,7 +366,7 @@ Usage — nesting is automatic:
 ```cpp
 void step() {
     TC_PROFILE("step");
-    { TC_PROFILE("rhs");     rhs<SWE, HLLC>(view(U), view(K), p); }   // for_each(par_unseq) inside
+    { TC_PROFILE("rhs");     baro_rhs<PPM, Sadourny, FvPgf>(s, k, p); }  // for_each(par_unseq) inside
     { TC_PROFILE("combine"); combine(view(U1), view(U), view(U), view(K), 1,0,1, p); }
 }
 // "step".child = rhs + combine; self("step") = total - child. Tree report shows both.

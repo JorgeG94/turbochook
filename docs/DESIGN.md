@@ -78,8 +78,8 @@ Two distinct "array-shaped" things, two tools:
   (guaranteed contiguous, register-resident, trivially copyable). Physics reads names via
   **structured bindings** (`auto [h,hu,hv] = q;`); generic code indexes `q[v]`. This gives
   readability AND N-genericity with zero new machinery. **OPEN/upgrade:** graduate to a
-  `Vec<N>` wrapper (array + operators + tuple protocol) when the HLLC star-state math earns
-  operator sugar (`sR*FL - sL*FR + sL*sR*(R-L)`). Drop-in, decide later.
+  `Vec<N>` wrapper (array + operators + tuple protocol) when per-layer/per-tracer vector math
+  earns operator sugar (arrives with M3 layers). Drop-in, decide later.
 
 - **Storage is SoA**: a system of N variables is `std::array<Field2, N>` (one contiguous
   buffer per component), **not** `mdspan<Cons>` AoS (stride-N reads kill coalescing).
@@ -225,14 +225,15 @@ void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o 
 ## 7. Decisions (resolved) + the dimension/mesh seam
 
 1. **Value type — `tc::Vec<N>`** (home-baked, `std::array`-backed, eager, trivially copyable;
-   glm-style, NOT Eigen/`std::vector` — see FOUNDATIONS §2b). `Cons`/`Flux` are per-
-   `EquationSet` aliases of it. Introduced at **M2** (SWE); M1's scalar field needs no Vec.
+   glm-style, NOT Eigen/`std::vector` — see FOUNDATIONS §2b). `Cons`/`Flux`/per-layer state are
+   aliases of it. Introduced at **M3** (layers); the M2 barotropic PoC is scalar-per-face and
+   needs no Vec.
 2. **Integrator — a policy `struct`** (e.g. `SSPRK2`) matching an `Integrator` concept. The
    concept is over `(Workspace&, RhsOp, BcOp, Params)` and knows **nothing** of physics/flux
    — it only calls the RHS op + `combine`s. Hand-code the SSP stages (not a Butcher engine).
    Declares `static constexpr int n_scratch` so the Workspace sizes its register set.
 3. **Ghosts — halo rows inside each field.** `nghost` is a **property of the reconstruction/
-   scheme** (`Scheme::nghost`; =1 for HLL/HLLC, =2 for MUSCL later). A `BC` kernel fills them
+   scheme** (`Scheme::nghost`; =1 for the barotropic stencil, wider for PPM/higher-order). A `BC` kernel fills them
    **before each RK stage's `rhs`** → the interior kernel is **branch-free** (no boundary
    `if`). 0-based; interior = `[nghost, nghost+n)`.
 4. **Workspace owns registers.** A `Workspace` allocates `U + n_scratch` registers from the
@@ -245,8 +246,8 @@ void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o 
   `Vec<N>`, a dimension-generic stencil. Do it.
 - **Structured ↔ unstructured is a DIFFERENT axis** — connectivity/iteration, not dimension;
   a `Rank` template does not get you triangles. What is shared for free is the **physics**
-  (`EquationSet` + `RiemannSolver`); what differs is **iteration + connectivity**. (Rakali
-  proves it: shared physics modules, *separate* structured/unstructured flux kernels.)
+  (the `Continuity`/`Coriolis`/`PGF` operators); what differs is **iteration + connectivity**.
+  (Rakali proves it: shared physics modules, *separate* structured/unstructured flux kernels.)
 - **Unification path (deferred):** a `Mesh`/topology **concept** + `for_each_face(mesh, …)`
   handing the flux a `FaceView{left, right, normal, area}`. Structured computes it from
   `(i,j)`; unstructured reads connectivity tables → the flux becomes mesh-agnostic. Caveats:
@@ -307,10 +308,13 @@ one runner through **CTest** (matches the Rakali muscle memory). Two tiers:
 
 - **Unit** — instantiate a few cells, call one kernel, assert against hand-computed values.
   Kernels are pure free functions over views ⇒ testable on host with `std::execution::seq`.
-  (`tc::Vec` ops, `phys_flux_x`, `wave_speeds`, `Arena`, the `Profiler` self-time math.)
+  (`tc::Vec` ops, the `Continuity`/`Coriolis`/`PGF` operators on a tiny grid, `Arena`, the
+  `Profiler` self-time math.)
 - **Analytical** — the highest-leverage class (every one caught a real bug in Rakali):
-  **dam-break** (vs exact SWE Riemann), **lake-at-rest** (well-balanced — flat stays flat),
-  **radial-symmetry** of a Gaussian drop, **conservation** (total-mass drift ~ machine eps).
+  **geostrophic adjustment** (relaxes to the correct balanced state), **lake-at-rest**
+  (well-balanced — flat η stays flat), a **Kelvin/Rossby wave** (right propagation speed),
+  **conservation** (total-mass drift ~ machine eps); at M3+, a **baroclinic-instability**
+  channel (eddies from physics).
 
 Add a test with (or before) each kernel. Float asserts use a tolerance (`doctest::Approx`).
 

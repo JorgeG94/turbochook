@@ -99,7 +99,7 @@ ctest --test-dir build-host --output-on-failure
 
 ## Conventions
 
-- **Naming:** types & concepts `PascalCase` (`Field2`, `Arena`, `EquationSet`, `HLLC`);
+- **Naming:** types & concepts `PascalCase` (`Field2`, `Arena`, `Continuity`, `SSPRK2`);
   functions/variables/methods `snake_case` (`for_each_cell`, `phys_flux_x`); template
   params `PascalCase`; namespace `tc`; physical constants `UPPER_SNAKE`
   (`inline constexpr Real GRAVITY = 9.81`). Files `snake_case.hpp` / `.cpp`.
