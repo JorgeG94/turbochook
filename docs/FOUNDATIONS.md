@@ -376,7 +376,8 @@ void step() {
 
 - `std::print`, `std::mdspan` are C++23; `std::format`, `std::source_location` are C++20;
   `std::chrono::steady_clock` is C++11. On a stdlib lacking `<print>`, the logger falls back
-  (§3). On a stdlib lacking `std::mdspan`, vendor `kokkos/mdspan` behind a `std::` shim
-  (DESIGN §9). (`std::expected` is C++23 too but we chose exceptions over it — §4.)
+  (§3). On a stdlib lacking `std::mdspan`, hand-roll a minimal `layout_left` `tc::mdview`
+  behind a `__has_include(<mdspan>)` seam (DESIGN §9) — **never Kokkos**. (`std::expected` is
+  C++23 too but we chose exceptions over it — §4.)
 - No third-party dependencies in `core/`. That is the whole point of `core/` — the stdlib is
   the dependency.

@@ -74,7 +74,23 @@ ctest --test-dir build-host --output-on-failure
 
 (Exact CMake option names are established in M0 — the above is the intended shape.)
 
-`std::mdspan` is C++23; if a compiler lacks it, vendor `kokkos/mdspan` behind a `std::` shim.
+`std::mdspan` is C++23; if the stdlib lacks it, hand-roll a minimal `layout_left`
+`tc::mdview` (~40 lines, the sliver we use) behind a `__has_include(<mdspan>)` seam.
+**Never vendor Kokkos** — see the dependency policy below.
+
+## Dependencies (policy)
+
+- **stdlib-first.** `lib/core/` depends on **nothing but the C++ stdlib** — that is its whole
+  purpose. Everything the stdlib now gives us (`std::format`/`print`, `mdspan`, parallel
+  algorithms, `chrono`, `source_location`) replaces what Rakali needed `pic` for.
+- **doctest** is the *only* dependency, and it is **test-only** (fetched, never shipped in the
+  library).
+- **No Kokkos. Ever.** Not the framework, not `kokkos/mdspan`. If `std::mdspan` is missing,
+  hand-roll the sliver (above).
+- **Escape valve for heavy machinery:** if turbochook ever genuinely needs numerics we don't
+  want to reimplement, the sanctioned path is a **C-ABI bridge to Rakali's Fortran** (it
+  already exposes an `iso_c_binding` FFI) — **not** adopting a C++ framework (Kokkos, Eigen,
+  Trilinos, …).
 
 ## Conventions
 

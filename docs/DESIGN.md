@@ -302,8 +302,21 @@ void combine(SystemView<N> o, SystemView<N> x, SystemView<N> y, SystemView<N> k,
   - `nvc++ -std=c++23 -stdpar=gpu -O2`   → GPU offload (production).
   - `nvc++ -std=c++23 -stdpar=multicore` → CPU threads (portable perf).
   - `g++ -std=c++23 -O2` / `clang++`     → host serial (`par_unseq` → seq); for tests/CI.
-- `std::mdspan` is C++23. If a compiler lacks it, vendor `kokkos/mdspan` (reference impl,
-  drop-in `std::` shim). Prefer real `std::mdspan`.
+- `std::mdspan` is C++23. Prefer it; if the stdlib lacks it, hand-roll a minimal
+  `layout_left` `tc::mdview` (~40 lines — the sliver we use: ctor from ptr+extents,
+  `operator[](i,j[,k])`, `extent()`, `data_handle()`) behind a `__has_include(<mdspan>)` seam
+  in `core/types.hpp`. **Never Kokkos.**
+
+### Dependency policy
+
+- **stdlib-first.** `lib/core/` depends on nothing but the C++ stdlib — the stdlib is what
+  replaces Rakali's `pic`.
+- **doctest** is the only dependency, and it is **test-only** (fetched, never shipped).
+- **No Kokkos, ever** — not the framework, not `kokkos/mdspan`.
+- **Escape valve:** if heavy machinery is ever genuinely needed, bridge to **Rakali's Fortran
+  via a C ABI** (it already ships an `iso_c_binding` FFI), rather than adopt a C++ framework
+  (Kokkos, Eigen, Trilinos, …). Reuse *our* code across a C boundary before importing someone
+  else's across a C++ one.
 
 ## 10. Testing
 

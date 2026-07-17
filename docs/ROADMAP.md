@@ -15,8 +15,8 @@ Goal: prove the build + GPU offload before any physics.
 - **doctest wired via CTest** (`FetchContent` + `doctest_discover_tests`) with one trivial
   passing test, so the test harness is proven before any physics.
 - Confirm GPU offload with **nsys** (kernels appear in the timeline) — not just "it ran".
-- `std::mdspan` / `std::print` availability check (real `std::` or vendored `kokkos/mdspan`
-  / logger fallback) — depends on nvc++'s stdlib, so verify here.
+- `std::mdspan` / `std::print` availability check (real `std::`, else the hand-rolled
+  `tc::mdview` / logger fallback — **never Kokkos**) — depends on nvc++'s stdlib, so verify here.
 
 **Acceptance:** builds in all three configs; `ctest` green (host); the GPU config shows
 kernels in nsys; the reduction result matches the serial result. *No solver yet — de-risk the
