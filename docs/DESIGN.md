@@ -358,7 +358,9 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
 ## 8. GPU hard rules (kernel-authoring checklist)
 
 - Capture **by value**; only `mdspan` views + POD params cross the boundary. Never `this`,
-  never an owner, never a `std::vector`.
+  never an owner, never a `std::vector`. **VERIFIED** (`../stdpar_patterns_cpp` p04): a
+  member-function kernel that captures `this` PASSES on host but hard-crashes on the GPU with
+  `cudaErrorIllegalAddress` — hoist member views to locals first (the §6b `compute` discipline).
 - No virtual / exceptions / RTTI / `std::function` / allocation inside a kernel.
 - Arena **sized once, never reallocates** (else dangling mdspans).
 - `layout_left` + parallel index on the contiguous (fast) axis = coalesced.
