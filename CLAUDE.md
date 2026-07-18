@@ -19,6 +19,10 @@ regime, **not** the coastal HLL/HLLC Godunov regime — do not build a Riemann-s
 > `src/core/ocean/` file→module→procedure to port it from (port the algorithm, not the source).
 > [`docs/LESSONS_FROM_RAKALI.md`](docs/LESSONS_FROM_RAKALI.md) — which Rakali design was
 > Fortran-tax (C++ erases it) vs GPU-fundamental (carries over unchanged — do NOT "fix" it).
+> `../stdpar_patterns_cpp` — standalone nvc++ stdpar reproducers (the MRE habit). The core
+> patterns turbochook needs (for_each/iota, reduce, mdspan-`m[i,j]`, managed memory, cross-TU
+> inline device helpers) are **verified to offload zero-cost on nvc++ 26.5 / V100** there.
+> nsys is down on the DGX box → verify offload by SPEED (`gpu_check.sh`), not the timeline.
 
 ## Directory layout (where things go matters)
 

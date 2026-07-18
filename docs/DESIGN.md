@@ -364,8 +364,12 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
 - `layout_left` + parallel index on the contiguous (fast) axis = coalesced.
 - **Double-buffer**: read old, write new (no read-neighbour-write-own race — same buffer =
   UB). RK registers make this natural.
-- **Verify offload with nsys.** A green CPU/serial run proves correctness, *not* that it
-  offloaded. `nvc++ -stdpar=gpu -gpu=…` then confirm kernels in the timeline.
+- **Verify offload.** A green CPU/serial run proves correctness, *not* that it offloaded.
+  With nsys: confirm kernels in the timeline. **nsys is currently broken on the DGX box**, so
+  the working substitute is **verify-by-speed**: build `gpu` + `host` and require
+  `gpu/host ≫ 1` on a big problem (a build can report `backend=gpu` yet run at host speed if it
+  didn't offload). See `../stdpar_patterns_cpp/scripts/gpu_check.sh` (asserts the ratio) —
+  the toolchain patterns turbochook depends on are already verified there on nvc++ 26.5 / V100.
 
 ## 9. Build & toolchain
 
@@ -378,6 +382,11 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
   `layout_left` `tc::mdview` (~40 lines — the sliver we use: ctor from ptr+extents,
   `operator[](i,j[,k])`, `extent()`, `data_handle()`) behind a `__has_include(<mdspan>)` seam
   in `core/types.hpp`. **Never Kokkos.**
+  **VERIFIED** (nvc++ 26.5 / V100, `../stdpar_patterns_cpp` p05_mdspan): `std::mdspan<layout_left>`
+  with the `m[i,j]` subscript **offloads and is zero-cost** vs manual index math; the fallback
+  path works on g++13 (no `<mdspan>`). **Gate on `__has_include(<mdspan>)` ONLY** — nvc++ 26.5
+  leaves `__cpp_lib_mdspan` UNDEFINED despite a working `<mdspan>`, so the feature-test macro
+  would wrongly reject it.
 
 ### Dependency policy
 
