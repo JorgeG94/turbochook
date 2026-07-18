@@ -366,6 +366,13 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
 - `layout_left` + parallel index on the contiguous (fast) axis = coalesced.
 - **Double-buffer**: read old, write new (no read-neighbour-write-own race — same buffer =
   UB). RK registers make this natural.
+- **Keep state device-resident: never touch it on the host inside the time loop.** Map once
+  (the arena), ping-pong pointers/registers on device, and do host reads only at output/diag
+  cadence. **MEASURED** (`../stdpar_patterns_cpp` COMPARISON.md): a per-step host copy of the
+  state forces a host↔device migration every step and is **~120–140× slower** than resident on
+  the V100 (and a 1.0× no-op on the host build — the penalty is purely GPU migration). This is
+  the C++ managed-memory form of Rakali's enter-data-once discipline; a stray per-step
+  diagnostic copy silently reintroduces the 100× penalty.
 - **Verify offload.** A green CPU/serial run proves correctness, *not* that it offloaded.
   With nsys: confirm kernels in the timeline. **nsys is currently broken on the DGX box**, so
   the working substitute is **verify-by-speed**: build `gpu` + `host` and require
