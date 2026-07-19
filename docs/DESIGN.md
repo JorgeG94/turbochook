@@ -145,6 +145,73 @@ it in mind" = shape the **M3** layered state (thickness-prognostic), operator in
 arbitrary `h_layer`, tolerate vanishing), and the stepper (remap hook) so the ALE remap drops
 in at **M4** with zero retrofit. Build the seam at M3; build the remap at M4.
 
+### ADR-7 — The mesh: geometry, topology, and iteration are *separable*; masking is a private trait
+
+The `Mesh` is a compile-time **concept**, not a base class; its models are **siblings**
+(Cartesian, spherical, tripolar, unstructured), never parent/child (§7). The word "grid"
+conflates **three concerns that different code consumes** — keep them apart:
+
+1. **Metric geometry** (Cartesian vs spherical): per-location edge lengths + areas
+   (`dx/dy/area(loc,i,j)`, in metres). Consumed by the **operators**. Spherical is a sibling
+   model, and the operators stay *byte-identical* because they are **flux-form** — map factors
+   are implicit (no explicit curvature terms for continuity/PGF; area-weighted PV for Coriolis).
+2. **Topology / connectivity** (periodic, tripolar **fold**): the halo *index map*. Consumed by
+   the **BC halo-fill**, NOT the operators. The fold is index-reversal + a **vector sign-flip**,
+   so fields carry a `Parity{Scalar,Vector}` tag and the staggering `Loc` is first-class.
+3. **Mask** (wet/dry): per-cell/face on/off. A **non-wetting-drying** dycore ⇒ the wet set is a
+   **static partition resolved once at init** ⇒ masking is a *private, optional* mesh trait,
+   **invisible to operators**.
+
+Staggering vocabulary: `Loc{Center, XFace, YFace, Corner}` (C-grid T/U/V/Q); every geometric
+accessor is location-aware. Coriolis is evaluated **at the location the term lives** (Corner
+for PV).
+
+**The mesh owns iteration.** Operators go through `for_each_cell/face(mesh, …)` handing a
+`FaceView{left, right, edge_len, area}` — **never raw `(i,j)` loops.** This one seam is what
+makes `Dense`/`Masked`/`Compact` meshes drop-in. It is shaped **per-cell-gather** (loop cells,
+gather their faces) to dodge the GPU **no-scatter double-visit race** (a per-face scatter writes
+two cells at once).
+
+**Masking spectrum — and the cliff.** dense + `constexpr` wet (aqua-planet, free) → dense +
+**zero-metric** coasts (a closed face has `edge_len=0` ⇒ `flux·edge_len` vanishes with no mask
+field) → dense storage + **wet-index iteration** (threads skip land, neighbours still `i±1`,
+`layout_left` coalescing intact) → **sorted/packed storage = the unstructured axis**
+(connectivity tables, gather, lost coalescing — the *deferred* line; do NOT cross it by
+accident). An explicit wet mask survives only for what geometry can't encode: diagnostic
+area-weighting and free-slip-vs-no-slip.
+
+**Load-bearing discipline (makes every seam real, not decorative).** Operators **(a) read
+metrics from the mesh** (`m.dx/area(loc,i,j)`, never a scalar `p.dx`) and **(b) iterate via
+`for_each_*(mesh, …)`** (never a raw loop). Do this in M2's Cartesian all-wet box and
+spherical, tripolar, and coastlines all become `using`-swaps; skip it and each is a rewrite.
+The `Params{dx,dy}` shortcut in `baro_state.hpp` is **scaffolding to delete** — geometry flows
+through the mesh.
+
+**Scope:** M2 ships **`DenseMesh`** (Cartesian, `constexpr` wet, wall/periodic). **`MaskedMesh`**
+(zero-metric coasts) and **`CompactMesh`** (wet-index iteration) are siblings behind the *same*
+`for_each_*(mesh, …)`. Tripolar = a spherical model + `edge(North)=Fold` halo. Packed/unstructured
+stays deferred.
+
+### ADR-8 — Diagnostics are device-resident reductions + a host `Monitor`
+
+A diagnostic is a **pure reduction over (state, mesh) → a scalar** (`transform_reduce` over
+`std::views::iota`), **device-resident**: only the scalar crosses to host. A per-step *full-field*
+host copy silently reintroduces the ~100–140× migration penalty (STATUS #4) — **never** do that.
+
+- **Primitives** (free functions, unit-testable, offloading): `total_mass` (Σ η·area·wet),
+  `total_energy` (KE+PE), `total_enstrophy` (Σ ½q²·area — needs PV), `max_speed`, `max_cfl`,
+  `any_nonfinite`. Area-weighting uses the mesh `area`/`wet` (wet cells only).
+- **Host driver `Monitor`**: runs a set at a **cadence**, logs via `tc::logger()`, and enforces
+  **invariants → throws host-side** (NaN/Inf, `CFL>1` → `throw Error(Errc::…)`). This *is* the
+  error discipline: kernels never throw; a post-step host reduction detects and throws.
+- **Synergy:** the conservation reductions **are the M2 validation oracles** — total-mass drift
+  ~ machine-eps *is* the continuity test. Diagnostics and analytical tests share one primitive set.
+- **Cadence:** CFL/NaN are cheap + safety-critical (every step or few); energy/mass every
+  `diag_every`.
+
+**Scope:** M2 builds `total_mass` + `max_cfl` + `any_nonfinite` + `Monitor`; enstrophy/energy
+spectra follow with PV/layers.
+
 ## 5. The compile-time policy axes (the payoff)
 
 Independent compile-time axes that compose — painful in Fortran, natural via C++ concepts.
@@ -154,12 +221,12 @@ continuity + Coriolis + PGF + integrator + BC); layers/EOS/vcoord/vmix arrive M3
 
 | Axis | Concept | Examples | Swapping it touches… |
 |---|---|---|---|
-| Grid / mesh | `Mesh` | Cartesian (later tripolar, unstructured) | only the Mesh |
+| Grid / mesh | `Mesh` | Dense-Cartesian → spherical/tripolar, masked/compact (ADR-7) | only the Mesh |
 | Continuity | `Continuity` | PPM thickness flux | only continuity |
 | Coriolis | `Coriolis` | Sadourny PV-enstrophy, energy form | only Coriolis |
 | Pressure gradient | `PGF` | Montgomery, FV, gprime (2-layer) | only the PGF |
 | Time | `Integrator` | Fwd-Euler, SSP-RK2 (+ barotropic/baroclinic split) | only the integrator |
-| Boundary | `BC` | wall, periodic, Flather | only the BC fill |
+| Boundary | `BC` | wall, periodic, tripolar fold, open/Flather (ADR-7 halo) | only the BC fill |
 | Vert. coord (M4) | `Vcoord` | sigma, z*, ALE remap | only the remap |
 | Vert. mixing (M5) | `Vmix` | PP81, KPP | only vmix |
 
