@@ -20,6 +20,8 @@ Godunov one — do not build a Riemann-solver SWE.
 > makes easy vs. what stays GPU-fundamental (do NOT try to "fix" the latter).
 > [`docs/CPP_STYLE.md`](docs/CPP_STYLE.md) — the C++ house style (naming, struct-vs-class,
 > concepts/policies, kernel rules); the detailed reference this file summarizes.
+> [`docs/CPP_PRIMER.md`](docs/CPP_PRIMER.md) — how the machinery *works* (lambda
+> captures/`[=]`, `mdspan`, concepts), for contributors newer to modern C++.
 
 ## Directory layout (where things go matters)
 

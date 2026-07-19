@@ -5,7 +5,9 @@ GPU-native. This is the *how-to-write-it* companion to [`DESIGN.md`](DESIGN.md) 
 architecture / prime directive), [`FOUNDATIONS.md`](FOUNDATIONS.md) (the layout), and
 [`GPU_STDPAR_NOTES.md`](GPU_STDPAR_NOTES.md) (what stdpar makes easy vs.
 GPU-fundamental). `CLAUDE.md` carries the terse summary; **this file is the detailed
-reference.** When they disagree, fix one of them — they must not drift.
+reference.** When they disagree, fix one of them — they must not drift. New to the
+machinery (lambda captures, `mdspan`, concepts)? Read [`CPP_PRIMER.md`](CPP_PRIMER.md)
+first — it explains *why* these rules work.
 
 The rules exist to serve one constraint above all: **code must offload under
 `nvc++ -stdpar=gpu` unchanged.** Most of what follows is downstream of that.
