@@ -1,68 +1,77 @@
 #pragma once
 // =============================================================================
-// mesh/cartesian_mesh.hpp — the grid, as a compile-time policy.
+// mesh/cartesian_mesh.hpp — the M2 grid model: a uniform Cartesian beta-plane,
+// DENSE (all-wet). This is ADR-7's "DenseMesh".
 //
-// TWO new ideas here:
+// It MODELS the `Mesh` concept (mesh.hpp). Structured geometry is COMPUTED — dx
+// is a stored scalar, coordinates and `f` are closed-form — so there is zero
+// per-cell storage and every accessor inlines to plain arithmetic. Masking is
+// `constexpr 1` (the ×wet in an operator compiles away). A spherical / tripolar /
+// masked / compact grid is a SIBLING model of the same concept (ADR-7 §7), NOT a
+// subclass: making structured a subclass of unstructured would force the fast
+// path to carry tables it doesn't need.
 //
-//  1. A C++20 CONCEPT (`Mesh`). A concept is a named, compile-time predicate over
-//     a type: "does type M provide nx()/ny()/dx()/dy()/coriolis_at()?". It
-//     replaces the old abstract-base-class-with-virtuals approach — but with ZERO
-//     runtime cost, because the compiler checks it at compile time and inlines
-//     the concrete calls. This is the heart of DESIGN's ADR-4 (compile-time
-//     dispatch) and the prime directive (no virtuals in kernels).
-//
-//  2. `CartesianMesh` is a concrete MODEL of that concept. Structured geometry is
-//     COMPUTED (dx is a stored scalar; f is an analytic beta-plane function) —
-//     zero per-cell storage, everything inlines to plain arithmetic. A future
-//     `TriMesh` would be a *sibling* model that READS connectivity tables. They
-//     are independent models of one concept, NOT parent/child (DESIGN §7): making
-//     structured a subclass of unstructured would force the fast path to carry
-//     tables it doesn't need.
-//
-// For M2 we only build CartesianMesh. The `Mesh` concept EXISTS so the seam is
-// there; we don't build the second backend (DESIGN §11 "leave the seam").
+// The discipline that makes those siblings drop-in (ADR-7): operators read metrics
+// through the LOCATION-aware accessors `dx(loc,i,j)`/`area(loc,i,j)` — never a bare
+// scalar — so uniform→stretched→spherical is a model swap. The scalar `dx()`/`dy()`
+// below are convenience for the `Params` scaffolding only.
 // =============================================================================
 
-#include <concepts>
+#include <array>
 #include "core/types.hpp"
+#include "mesh/mesh.hpp"
 
 namespace tc {
 
-// The concept: a Mesh must answer these queries. `-> std::convertible_to<Index>`
-// constrains not just that the call is valid but what it returns. Read it as a
-// contract the compiler enforces on any type claiming to be a Mesh.
-template <class M>
-concept Mesh = requires(const M m, Index j) {
-    { m.nx() }            -> std::convertible_to<Index>;   // interior cells, x
-    { m.ny() }            -> std::convertible_to<Index>;   // interior cells, y
-    { m.dx() }            -> std::convertible_to<Real>;    // cell size, x  (metric)
-    { m.dy() }            -> std::convertible_to<Real>;    // cell size, y
-    { m.coriolis_at(j) }  -> std::convertible_to<Real>;    // f on a beta-plane, per row
-};
-
-// A uniform Cartesian beta-plane grid: f(y) = f0 + beta*(y - y0). Everything is a
-// scalar or a closed-form function → nothing stored per cell, all inlined.
 class CartesianMesh {
     Index nx_, ny_;
     Real  dx_, dy_;
-    Real  f0_, beta_;         // Coriolis: f = f0 + beta*y  (beta=0 ⇒ f-plane)
+    Real  f0_, beta_;                    // Coriolis: f = f0 + beta*y  (beta=0 ⇒ f-plane)
+    std::array<EdgeConn, 4> edges_;      // topology, indexed by Edge
+
+    // Ordinate of a location's (i,j): on a face LINE it is integer·spacing, at a
+    // CENTRE it is (index+½)·spacing.
+    Real xr(Loc l, Index i) const { return (x_staggered(l) ? Real(i) : Real(i) + Real(0.5)) * dx_; }
+    Real yr(Loc l, Index j) const { return (y_staggered(l) ? Real(j) : Real(j) + Real(0.5)) * dy_; }
+
 public:
-    CartesianMesh(Index nx, Index ny, Real dx, Real dy, Real f0 = 1.0e-4, Real beta = 0.0)
-        : nx_(nx), ny_(ny), dx_(dx), dy_(dy), f0_(f0), beta_(beta) {}
+    CartesianMesh(Index nx, Index ny, Real dx, Real dy,
+                  Real f0 = 1.0e-4, Real beta = 0.0,
+                  EdgeConn west = EdgeConn::Wall, EdgeConn east  = EdgeConn::Wall,
+                  EdgeConn south = EdgeConn::Wall, EdgeConn north = EdgeConn::Wall)
+        : nx_(nx), ny_(ny), dx_(dx), dy_(dy), f0_(f0), beta_(beta),
+          edges_{west, east, south, north} {}
 
-    Index nx() const { return nx_; }
+    Index nx() const { return nx_; }     // interior cell counts (loop bounds)
     Index ny() const { return ny_; }
-    Real  dx() const { return dx_; }
-    Real  dy() const { return dy_; }
 
-    // f at cell-row j's y-coordinate. A real staggered scheme evaluates f at the
-    // location the term lives (corner for PV) — refine when Coriolis is ported.
-    Real coriolis_at(Index j) const { return f0_ + beta_ * (Real(j) * dy_); }
+    // Uniform-spacing convenience — feeds the Params scaffolding. The location-aware
+    // dx(loc,i,j)/dy(loc,i,j) below are the real contract operators must use (ADR-7).
+    Real dx() const { return dx_; }
+    Real dy() const { return dy_; }
+
+    // ── Mesh concept surface (all closed-form) ───────────────────────────────────
+    Index extent_x(Loc l) const { return nx_ + (x_staggered(l) ? 1 : 0); }
+    Index extent_y(Loc l) const { return ny_ + (y_staggered(l) ? 1 : 0); }
+
+    Real x(Loc l, Index i, Index /*j*/) const { return xr(l, i); }   // Cartesian: x ⟂ j
+    Real y(Loc l, Index /*i*/, Index j) const { return yr(l, j); }
+
+    Real dx(Loc /*l*/, Index /*i*/, Index /*j*/) const { return dx_; }   // uniform
+    Real dy(Loc /*l*/, Index /*i*/, Index /*j*/) const { return dy_; }
+    Real area(Loc /*l*/, Index /*i*/, Index /*j*/) const { return dx_ * dy_; }
+
+    // f at the LOCATION the term lives (PV wants Corner → integer j·dy).
+    Real coriolis(Loc l, Index /*i*/, Index j) const { return f0_ + beta_ * yr(l, j); }
+
+    // Masking trait: a dense mesh is all ocean → constexpr 1 (the ×wet compiles away).
+    static constexpr Real wet(Loc, Index, Index) { return Real(1); }
+
+    EdgeConn edge(Edge e) const { return edges_[static_cast<int>(e)]; }
 };
 
-// Compile-time proof the class satisfies the concept. If you break CartesianMesh's
-// interface, THIS line fails with a crisp message — not some deep template error
-// at the first use site. A cheap, high-value habit.
+// Compile-time proof the model satisfies the concept — break the interface and
+// THIS fails crisply, not some deep template error at the first use site.
 static_assert(Mesh<CartesianMesh>);
 
 } // namespace tc
