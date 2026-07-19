@@ -40,7 +40,7 @@ concept ContinuityModule =
         { m.compute(s, k, p) };
     };
 
-template <WallReconstruction R>
+template <WallReconstruction Scheme>
 class ContinuityFlux {
     // Persistent workspace, arena-backed — the face-flux buffers, members
     // allocated in init().
@@ -61,7 +61,7 @@ public:
     void compute(BaroState s, BaroState k, Params p) const {
         Field2 fx = mass_flux_x_, fy = mass_flux_y_;   // ← hoist, capture these by value
         // TODO(M2): implement the PPM swept thickness flux. Sketch:
-        //     for_each_face_x: fx[i,j] = R::reconstruct(...)-based swept flux
+        //     for_each_face_x: fx[i,j] = Scheme::reconstruct(...)-based swept flux
         //     for_each_face_y: fy[i,j] = ...
         //     for_each_cell  : k.eta[i,j] -= (fx[i+1,j]-fx[i,j])/dx
         //                                  + (fy[i,j+1]-fy[i,j])/dy

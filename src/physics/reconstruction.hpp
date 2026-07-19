@@ -28,7 +28,7 @@
 // Consumers constrain on the KIND they actually consume: continuity's swept flux
 // takes `WallReconstruction`; tracer advection (planned, WENO) will take
 // `FaceReconstruction`. Code that must accept EITHER kind uses the `Reconstructor`
-// umbrella and branches once on `R::kind` — that both-kinds consumer arrives with
+// umbrella and branches once on `Scheme::kind` — that both-kinds consumer arrives with
 // tracer advection, not before.
 //
 // STATUS: this is the STRUCTURE (concepts + types + tagged seams). PCM/PLM are real
@@ -83,26 +83,26 @@ struct Poly {
 // ── The two sibling concepts. Each requires its OWN signature; the nested `kind`
 // requirement keeps the split honest (a wall scheme does NOT satisfy the face
 // concept and vice-versa). Missing `radius` → substitution failure → not a model.
-template <class R>
-concept WallReconstruction = requires(std::array<Real, 2 * R::radius + 1> w) {
-    requires R::kind == ReconKind::Wall;
-    { R::radius } -> std::convertible_to<int>;
-    { R::order  } -> std::convertible_to<int>;
-    { R::reconstruct(w) } -> std::same_as<Poly<R::order>>;
+template <class Scheme>
+concept WallReconstruction = requires(std::array<Real, 2 * Scheme::radius + 1> w) {
+    requires Scheme::kind == ReconKind::Wall;
+    { Scheme::radius } -> std::convertible_to<int>;
+    { Scheme::order  } -> std::convertible_to<int>;
+    { Scheme::reconstruct(w) } -> std::same_as<Poly<Scheme::order>>;
 };
 
-template <class R>
-concept FaceReconstruction = requires(std::array<Real, 2 * R::radius + 1> w, Bias b) {
-    requires R::kind == ReconKind::Face;
-    { R::radius } -> std::convertible_to<int>;
-    { R::reconstruct(w, b) } -> std::same_as<Real>;
+template <class Scheme>
+concept FaceReconstruction = requires(std::array<Real, 2 * Scheme::radius + 1> w, Bias b) {
+    requires Scheme::kind == ReconKind::Face;
+    { Scheme::radius } -> std::convertible_to<int>;
+    { Scheme::reconstruct(w, b) } -> std::same_as<Real>;
 };
 
 // The umbrella: "is a reconstruction scheme." A disjoint tagged union — satisfied
 // by EITHER kind, forcing NEITHER interface on the other. Used only by code that
 // is deliberately blind to the kind (the future tracer-advection consumer).
-template <class R>
-concept Reconstructor = WallReconstruction<R> || FaceReconstruction<R>;
+template <class Scheme>
+concept Reconstructor = WallReconstruction<Scheme> || FaceReconstruction<Scheme>;
 
 // ── The wall family (PCM/PLM real; PPM/PQM correctly-shaped seams) ───────────────
 
