@@ -1,7 +1,8 @@
 # TurboChook 🐔⚡
 
 A from-scratch, **GPU-native C++23 ocean dynamical core**, built on **ISO C++ standard
-parallelism** (`std::execution::par_unseq` + `nvc++ -stdpar=gpu`).
+parallelism** (`std::execution::par_unseq` + `nvc++ -stdpar=gpu`). I am only doing this 
+to refresh my knowledge of C++ and do some stupid things. 
 
 A vehicle for learning very modern C++ *and* GPU compute at once, rendering the
 architecture of a hydrostatic C-grid ocean model in idiomatic modern C++.
