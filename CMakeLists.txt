@@ -20,7 +20,7 @@ endif()
 #   off       : g++/clang, host-serial   (par_unseq → seq via TC_STDPAR_OFF; no TBB)
 set(TC_STDPAR "off" CACHE STRING "stdpar backend: gpu | multicore | off")
 set_property(CACHE TC_STDPAR PROPERTY STRINGS gpu multicore off)
-set(TC_GPU_ARCH "cc80" CACHE STRING "GPU arch for nvc++ (cc70 | cc80 | cc90)")
+set(TC_GPU_ARCH "cc70" CACHE STRING "GPU arch for nvc++ (cc70 | cc80 | cc90)")
 
 # One INTERFACE target carries flags + include path + defines to everything.
 add_library(tc_flags INTERFACE)
