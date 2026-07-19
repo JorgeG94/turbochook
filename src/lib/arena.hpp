@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// core/arena.hpp — the memory Arena (DESIGN ADR-3).
+// lib/arena.hpp — the memory Arena (DESIGN ADR-3).
 //
 // ONE monotonic bump allocator over ONE flat buffer. It owns the bytes; it hands
 // out non-owning `Field` views (mdspans) INTO itself. This is the whole memory
@@ -28,7 +28,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "core/types.hpp"
-#include "core/error.hpp"
+#include "lib/error.hpp"
 
 namespace tc {
 

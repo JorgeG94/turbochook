@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// core/profiler.hpp — nested-region wall-clock timing (a hierarchical
+// lib/profiler.hpp — nested-region wall-clock timing (a hierarchical
 // profiler). HOST-side.
 //
 // The one idiom to learn here is RAII (Resource Acquisition Is Initialisation):

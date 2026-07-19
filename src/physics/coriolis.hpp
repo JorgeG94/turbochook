@@ -13,7 +13,7 @@
 
 #include <concepts>
 #include "core/types.hpp"
-#include "core/arena.hpp"
+#include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "physics/baro_state.hpp"
 

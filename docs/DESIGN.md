@@ -391,7 +391,7 @@ locals, capture `[=]`, never `this`" is the device-boundary rule; the composed
 
 ### Dependency policy
 
-- **stdlib-first.** `src/core/` depends on nothing but the C++ stdlib — the stdlib is the
+- **stdlib-first.** `src/core/` (numeric types) and `src/lib/` (plumbing) depend on nothing but the C++ stdlib — the stdlib is the
   only dependency the core needs (`std::format`/`print`, `mdspan`, parallel algorithms,
   `chrono`, `source_location`).
 - **doctest** is the only dependency, and it is **test-only** (fetched, never shipped).

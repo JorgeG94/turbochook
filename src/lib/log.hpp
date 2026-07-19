@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// core/log.hpp — the logger. HOST-ONLY (a kernel has no I/O).
+// lib/log.hpp — the logger. HOST-ONLY (a kernel has no I/O).
 //
 // Modern-C++ things to notice here:
 //   • std::format / std::print (C++20/23) replace iostream AND printf. The

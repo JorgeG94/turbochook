@@ -1,8 +1,9 @@
-# TurboChook — Foundations (`src/core/`) & Directory Layout
+# TurboChook — Foundations (`src/core/` + `src/lib/`) & Directory Layout
 
-The foundational, physics-free layer — a thin base, far
-smaller because the C++23 stdlib gives us most of it (`std::format`/`std::print`,
-`std::expected`, `std::source_location`, `std::mdspan`, `std::chrono`, parallel algorithms).
+The two foundational, physics-free layers — `core/` (the numeric substrate) and
+`lib/` (physics-agnostic plumbing) — a thin base, far smaller because the C++23
+stdlib gives us most of it (`std::format`/`std::print`, `std::expected`,
+`std::source_location`, `std::mdspan`, `std::chrono`, parallel algorithms).
 
 ## 1. Directory layout — *where things go matters*
 
@@ -15,13 +16,15 @@ top-level `src/*.cpp`, the library is the subdirectories.
 turbochook/
 ├── src/                          # all sources
 │   ├── m0_walking_skeleton.cpp   # a thin main (top-level *.cpp = an executable)
-│   ├── core/                     # FOUNDATION — zero physics; the base layer.
+│   ├── core/                     # NUMERIC SUBSTRATE — zero physics; stdlib only.
 │   │   ├── types.hpp             # Real, Index, Field<Rank> = mdspan<layout_left>, aliases
-│   │   ├── vec.hpp               # tc::Vec<N> — fixed-size numeric vector (glm-style; NOT std::vector/Eigen)
+│   │   └── vec.hpp               # tc::Vec<N> — fixed-size numeric vector (glm-style; NOT std::vector/Eigen)
+│   ├── lib/                      # PLUMBING — physics-agnostic support; stdlib + core/.
 │   │   ├── log.hpp               # Logger (std::format/std::print), levels, global accessor
-│   │   ├── error.hpp             # Error, Result<T> = std::expected<T,Error>, source_location
+│   │   ├── error.hpp             # Error + Errc + source_location (exceptions, host-only)
 │   │   ├── arena.hpp             # the memory arena (DESIGN ADR-3)
-│   │   └── timer.hpp             # scoped wall-clock timing (profiler seed)
+│   │   ├── profiler.hpp          # nested-region wall-clock timing (self vs inclusive)
+│   │   └── (later)               # assert.hpp, mpi.hpp, gpu.hpp — assertions, MPI, CUDA/HIP wrappers
 │   ├── mesh/                     # grid extents, metrics, ghost/halo (0-based; interior = [nghost, nghost+n))
 │   ├── physics/                  # ocean operator policies (continuity.hpp, coriolis.hpp, pgf.hpp; eos.hpp @ M4)
 │   ├── numerics/                 # parallel.hpp (for_each_cell / for_each_face), integrator.hpp
@@ -34,11 +37,13 @@ turbochook/
 
 - **Namespace:** a single flat `tc` namespace (short call sites — `tc::Continuity`, not
   `tc::physics::Continuity`). Directories organise files, not namespaces.
-- **Include path:** `src/` is on the include path → `#include "core/log.hpp"`,
-  `#include "physics/coriolis.hpp"`. No deep `<turbochook/...>` prefix for a standalone repo.
-- **Dependency rule:** `core/` depends on nothing but the stdlib. Everything depends on
-  `core/`. Physics/numerics/bc never include each other's internals — they compose through
-  the concepts in DESIGN §5.
+- **Include path:** `src/` is on the include path → `#include "core/types.hpp"`,
+  `#include "lib/log.hpp"`, `#include "physics/coriolis.hpp"`. No deep `<turbochook/...>`
+  prefix for a standalone repo.
+- **Dependency rule:** `core/` (numeric types) depends on nothing but the stdlib; `lib/`
+  (plumbing) depends on the stdlib and `core/`. Everything else depends on `core/` + `lib/`.
+  Physics/numerics/bc never include each other's internals — they compose through the
+  concepts in DESIGN §5.
 
 ## 2. `core/types.hpp`
 
@@ -119,7 +124,7 @@ Usage: a per-layer state aliases it (`using Cons = tc::Vec<3>;`); physics destru
 (`a*x + b*y`). Introduced at **M3** (layers) — the M2 barotropic PoC is scalar-per-face and
 doesn't need it. Operators resolve by ADL (never write `tc::operator+`).
 
-## 3. `core/log.hpp` — the logger
+## 3. `lib/log.hpp` — the logger
 
 Design: C++23 `std::format`/`std::print` (no dependency, no iostream), runtime level
 threshold, compile-time-checked format strings, a process-global accessor. **Host-only** —
@@ -193,7 +198,7 @@ Notes:
   falls back to `std::format` + `std::fputs`. `std::format` itself is C++20 and widely
   available.
 
-## 4. `core/error.hpp` — error handling (exceptions on the host)
+## 4. `lib/error.hpp` — error handling (exceptions on the host)
 
 Decision: **exceptions for the host path** (not mission-critical; setup failures are
 genuinely exceptional; RAII unwinds the arena/files cleanly on throw; catch once at `main`).
@@ -289,7 +294,7 @@ int main() try {
   **CPU-green ≠ device-correct** — these post-step guards are the net.
 - Don't throw per-cell in the hot loop — detect via the reduction, throw once at the boundary.
 
-## 5. `core/profiler.hpp` — nested-region timing (RAII, `steady_clock`)
+## 5. `lib/profiler.hpp` — nested-region timing (RAII, `steady_clock`)
 
 A hierarchical profiler (active-region stack + per-region `child_time` →
 **self = total − child**; flat report by default, opt-in tree with inclusive/self columns).
@@ -381,5 +386,5 @@ void step() {
   (§3). On a stdlib lacking `std::mdspan`, hand-roll a minimal `layout_left` `tc::mdview`
   behind a `__has_include(<mdspan>)` seam (DESIGN §9) — **never Kokkos**. (`std::expected` is
   C++23 too but we chose exceptions over it — §4.)
-- No third-party dependencies in `core/`. That is the whole point of `core/` — the stdlib is
+- No third-party dependencies in `core/` or `lib/`. That is the whole point of the base — the stdlib is
   the dependency.

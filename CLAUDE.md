@@ -12,7 +12,7 @@ Godunov one — do not build a Riemann-solver SWE.
 
 > **Read [`docs/DESIGN.md`](docs/DESIGN.md) before writing any code** — the settled
 > architecture (the prime directive, the three-layer split, the ADRs, the code
-> skeletons). [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) is the `src/core/` layer
+> skeletons). [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) is the `src/core/`+`src/lib/` layer
 > (directory layout + reference implementations). [`docs/ROADMAP.md`](docs/ROADMAP.md)
 > is the milestone ladder; do them in order. [`docs/STATUS.md`](docs/STATUS.md) is
 > the current state + verified toolchain findings — **read it to pick up work.**
@@ -21,14 +21,16 @@ Godunov one — do not build a Riemann-solver SWE.
 
 ## Directory layout (where things go matters)
 
-`src/` holds all the sources. `src/core/` is the physics-free base layer
-(`types.hpp`, `log.hpp`, `error.hpp`, `arena.hpp`, `profiler.hpp`) — depends on
-nothing but the stdlib; everything depends on it. Above it: `src/mesh`,
-`src/physics`, `src/numerics`, `src/bc`, `src/io` — the header-first library. Thin
-`main`s are top-level `src/*.cpp` (no package manager, so no separate `app/`);
-host-serial tests in `tests/`. Single flat `tc` namespace; `src/` on the include
-path (`#include "core/log.hpp"`). Full tree + the dependency rule in
-[`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md).
+`src/` holds all the sources, over two physics-free base layers: `src/core/` is
+the numeric substrate (`types.hpp` — `Real`, `Index`, `Field`, the mdspan seam),
+and `src/lib/` is the physics-agnostic plumbing (`log.hpp`, `error.hpp`,
+`profiler.hpp`, `arena.hpp`; later `assert`, MPI and CUDA/HIP wrappers). `core/`
+depends on nothing but the stdlib; `lib/` depends on the stdlib and `core/`. Above
+them the header-first library: `src/mesh`, `src/physics`, `src/numerics`,
+`src/bc`, `src/io`. Thin `main`s are top-level `src/*.cpp` (no package manager, so
+no separate `app/`); host-serial tests in `tests/`. Single flat `tc` namespace;
+`src/` on the include path (`#include "lib/log.hpp"`, `#include "core/types.hpp"`).
+Full tree + the dependency rule in [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md).
 
 ## Logging & errors
 
@@ -102,8 +104,9 @@ ctest --test-dir build-host --output-on-failure
 
 ## Dependencies (policy)
 
-- **stdlib-first.** `src/core/` depends on **nothing but the C++ stdlib** — that is
-  its whole purpose (`std::format`/`print`, `mdspan`, parallel algorithms, `chrono`,
+- **stdlib-first.** The base layers `src/core/` (numeric types) and `src/lib/`
+  (plumbing) depend on **nothing but the C++ stdlib** — `core/` on the stdlib
+  alone, `lib/` on the stdlib plus `core/`. That is their whole purpose (`std::format`/`print`, `mdspan`, parallel algorithms, `chrono`,
   `source_location`).
 - **doctest** is the *only* dependency, and it is **test-only** (fetched, never
   shipped in the library).
@@ -140,7 +143,7 @@ shared branches without a note.
 
 ## Status
 
-**Milestone 0 complete** — foundation (`src/core`), the iteration seam
+**Milestone 0 complete** — foundation (`src/core` + `src/lib`), the iteration seam
 (`src/numerics/parallel.hpp`), the doctest harness, and the composing compile-time
 policy stack all build and run (host-verified). The M2 operator bodies are the next
 work. See [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).

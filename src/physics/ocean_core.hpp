@@ -18,9 +18,9 @@
 //     ∂v/∂t = -g ∂η/∂y - (f u)|v + adv
 // =============================================================================
 
-#include "core/arena.hpp"
-#include "core/log.hpp"
-#include "core/profiler.hpp"
+#include "lib/arena.hpp"
+#include "lib/log.hpp"
+#include "lib/profiler.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "physics/baro_state.hpp"
 #include "physics/continuity.hpp"

@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// core/error.hpp — error handling. EXCEPTIONS, on the HOST path only.
+// lib/error.hpp — error handling. EXCEPTIONS, on the HOST path only.
 //
 // Why exceptions (DESIGN/FOUNDATIONS §4): setup/config/I/O failures are genuinely
 // exceptional, RAII unwinds the arena+files cleanly on throw, and one catch at

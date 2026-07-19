@@ -18,9 +18,9 @@
 #include <ranges>
 #include <cmath>
 
-#include "core/log.hpp"
-#include "core/profiler.hpp"
-#include "core/arena.hpp"
+#include "lib/log.hpp"
+#include "lib/profiler.hpp"
+#include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "physics/ocean_core.hpp"
 

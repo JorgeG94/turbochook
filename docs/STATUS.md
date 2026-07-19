@@ -16,7 +16,7 @@ and run. No real physics yet — the M2 operator bodies are stubs.
 
 ```
 src/core/     types.hpp      Real/Index + Field<Rank> (mdspan ↔ MdView seam)
-              log.hpp        std::format/print logger, compile-time-checked
+src/lib/      log.hpp        std::format/print logger, compile-time-checked
               error.hpp      exceptions + source_location, host/device split
               arena.hpp      size-once bump allocator; hands out Field views
               profiler.hpp   RAII nested-region timing (self vs inclusive)
