@@ -18,6 +18,8 @@ Godunov one — do not build a Riemann-solver SWE.
 > the current state + verified toolchain findings — **read it to pick up work.**
 > [`docs/GPU_STDPAR_NOTES.md`](docs/GPU_STDPAR_NOTES.md) — what modern C++ + stdpar
 > makes easy vs. what stays GPU-fundamental (do NOT try to "fix" the latter).
+> [`docs/CPP_STYLE.md`](docs/CPP_STYLE.md) — the C++ house style (naming, struct-vs-class,
+> concepts/policies, kernel rules); the detailed reference this file summarizes.
 
 ## Directory layout (where things go matters)
 
@@ -117,10 +119,14 @@ ctest --test-dir build-host --output-on-failure
 
 ## Conventions
 
+Full house style in [`docs/CPP_STYLE.md`](docs/CPP_STYLE.md); the essentials:
+
 - **Naming:** types & concepts `PascalCase` (`Field2`, `Arena`, `Continuity`,
   `SSPRK2`); functions/variables/methods `snake_case` (`for_each_cell`,
-  `phys_flux_x`); template params `PascalCase`; namespace `tc`; physical constants
-  `UPPER_SNAKE` (`inline constexpr Real GRAVITY = 9.81`). Files `snake_case`.
+  `phys_flux_x`); template params `PascalCase` **and role-meaningful** (`Scheme`,
+  `Module`, `Integ` — not `R`/`M`/`T`; abstract dimensionals `Rank`/`Order`/`N` are
+  fine); namespace `tc`; physical constants `UPPER_SNAKE` (`inline constexpr Real
+  GRAVITY = 9.81`). Files `snake_case`.
 - **No `using namespace`** (not `std`, not `tc`). Fully-qualify *named* entities:
   `std::` always, `tc::` from outside the namespace. **Operators are exempt** (ADL):
   write `a + b` / `dot(a,b)`, never `tc::operator+`.
