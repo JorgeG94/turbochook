@@ -23,7 +23,7 @@ template <class M>
 concept CoriolisModule =
     requires(M m, Arena& a, const CartesianMesh& mesh, BaroState s, BaroState k, Params p) {
         { m.init(a, mesh) };
-        { m.compute(s, k, p) };
+        { m.compute(s, k, mesh, p) };
     };
 
 class SadournyEnstrophy {
@@ -33,13 +33,13 @@ public:
         q_ = a.alloc2d(m.nx() + 1, m.ny() + 1);    // corners: (nx+1) × (ny+1)
     }
 
-    void compute(BaroState s, BaroState k, Params p) const {
+    void compute(BaroState s, BaroState k, const CartesianMesh& mesh, Params p) const {
         Field2 q = q_;      // hoist member → local; capture [=], NEVER `this`
         // TODO(M2): implement the Sadourny enstrophy scheme. Sketch:
-        //     for_each_corner : q[i,j] = (f + zeta(s,i,j)) / h_corner(s,i,j)
+        //     for_each_corner : q[i,j] = (mesh.coriolis(Corner,i,j) + ζ)/h_corner
         //     for_each_face_x : k.u[i,j] += pv_flux_u(q, s, i, j)
         //     for_each_face_y : k.v[i,j] += pv_flux_v(q, s, i, j)
-        (void)s; (void)k; (void)p; (void)q;
+        (void)s; (void)k; (void)mesh; (void)p; (void)q;
     }
 };
 

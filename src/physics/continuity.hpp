@@ -37,7 +37,7 @@ template <class M>
 concept ContinuityModule =
     requires(M m, Arena& a, const CartesianMesh& mesh, BaroState s, BaroState k, Params p) {
         { m.init(a, mesh) };
-        { m.compute(s, k, p) };
+        { m.compute(s, k, mesh, p) };
     };
 
 template <WallReconstruction Scheme>
@@ -58,14 +58,14 @@ public:
     // then the kernel lambda captures [=] — NEVER `this` (capturing `this` passes
     // on host but hard-crashes on GPU with cudaErrorIllegalAddress — verified on
     // nvc++ 26.5 / V100). The math is the TODO; the discipline is the point.
-    void compute(BaroState s, BaroState k, Params p) const {
+    void compute(BaroState s, BaroState k, const CartesianMesh& mesh, Params p) const {
         Field2 fx = mass_flux_x_, fy = mass_flux_y_;   // ← hoist, capture these by value
-        // TODO(M2): implement the PPM swept thickness flux. Sketch:
+        // TODO(M2): implement the PPM swept thickness flux (the per-cell-gather
+        // FaceView flux-divergence lands here — its first consumer). Sketch:
         //     for_each_face_x: fx[i,j] = Scheme::reconstruct(...)-based swept flux
         //     for_each_face_y: fy[i,j] = ...
-        //     for_each_cell  : k.eta[i,j] -= (fx[i+1,j]-fx[i,j])/dx
-        //                                  + (fy[i,j+1]-fy[i,j])/dy
-        (void)s; (void)k; (void)p; (void)fx; (void)fy;
+        //     for_each_cell  : k.eta[i,j] -= (Σ flux·edge_len)/area   (mesh metrics)
+        (void)s; (void)k; (void)mesh; (void)p; (void)fx; (void)fy;
     }
 };
 

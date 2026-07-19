@@ -73,10 +73,11 @@ public:
     // The RHS operator: zero k, then SUM each module's tendency into it. This is
     // `baro_rhs` from DESIGN §6 — the composition of the policy slots.
     void baro_rhs(BaroState s, BaroState k) const {
-        // TODO(M2): zero k first (three for_each over the staggered extents).
-        cont_.compute(s, k, p_);   // η tendency (thickness flux divergence)
-        pgf_ .compute(s, k, p_);   // -g ∇η into u, v
-        cor_ .compute(s, k, p_);   // PV-Coriolis + advection into u, v
+        // TODO(M2): zero k first (three for_each over the staggered extents) — the
+        // RHS is a SUM of operator tendencies, so each compute() accumulates (+=).
+        cont_.compute(s, k, mesh_, p_);   // η tendency (thickness flux divergence)
+        pgf_ .compute(s, k, mesh_, p_);   // -g ∇η into u, v
+        cor_ .compute(s, k, mesh_, p_);   // PV-Coriolis + advection into u, v
     }
 
     // One outer step. The integrator drives; we hand it the RHS and BC as HOST
