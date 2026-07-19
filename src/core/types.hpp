@@ -101,12 +101,13 @@ public:
         static_assert(sizeof...(E) == Rank, "extent count must equal Rank");
     }
 
-    // Multidim subscript (C++23). Two overloads keep it readable at Rank 2/3;
-    // both const and mutable so `Field` works as source and destination.
-    constexpr Real& operator[](Index i, Index j)          requires (Rank == 2) { return p_[offset(i, j)]; }
-    constexpr Real  operator[](Index i, Index j)    const  requires (Rank == 2) { return p_[offset(i, j)]; }
-    constexpr Real& operator[](Index i, Index j, Index k)       requires (Rank == 3) { return p_[offset(i, j, k)]; }
-    constexpr Real  operator[](Index i, Index j, Index k) const requires (Rank == 3) { return p_[offset(i, j, k)]; }
+    // Multidim subscript (C++23). SHALLOW-CONST, matching std::mdspan: the view is
+    // a pointer, so a `const` view still yields a mutable `Real&` (const view →
+    // mutable pointee). This is what lets a kernel WRITE through a Field captured
+    // by value (the copy is const, but the double-buffer write buffer must be
+    // writable). A single `const` overload per rank serves source AND destination.
+    constexpr Real& operator[](Index i, Index j)          const requires (Rank == 2) { return p_[offset(i, j)]; }
+    constexpr Real& operator[](Index i, Index j, Index k) const requires (Rank == 3) { return p_[offset(i, j, k)]; }
 
     constexpr Index extent(int r) const { return ext_[r]; }   // size along axis r
     constexpr Real* data_handle() const { return p_; }        // raw pointer (host-side only)
