@@ -22,6 +22,8 @@ Godunov one — do not build a Riemann-solver SWE.
 > concepts/policies, kernel rules); the detailed reference this file summarizes.
 > [`docs/CPP_PRIMER.md`](docs/CPP_PRIMER.md) — how the machinery *works* (lambda
 > captures/`[=]`, `mdspan`, concepts), for contributors newer to modern C++.
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the visual map (mermaid): header
+> deps, concept↔model wiring, the `OceanCore` composition, the step data flow.
 
 ## Directory layout (where things go matters)
 
