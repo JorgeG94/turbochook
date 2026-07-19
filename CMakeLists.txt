@@ -24,11 +24,11 @@ set(TC_GPU_ARCH "cc80" CACHE STRING "GPU arch for nvc++ (cc70 | cc80 | cc90)")
 
 # One INTERFACE target carries flags + include path + defines to everything.
 add_library(tc_flags INTERFACE)
-target_include_directories(tc_flags INTERFACE ${CMAKE_SOURCE_DIR}/lib)
+target_include_directories(tc_flags INTERFACE ${CMAKE_SOURCE_DIR}/src)
 
 if(TC_STDPAR STREQUAL "gpu")
   # Explicit gpu with a non-NVHPC compiler is a HARD ERROR — never a silent CPU
-  # downgrade (Rakali's rule).
+  # downgrade.
   if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     message(FATAL_ERROR "TC_STDPAR=gpu requires nvc++ (NVHPC); got ${CMAKE_CXX_COMPILER_ID}.")
   endif()
@@ -40,7 +40,7 @@ elseif(TC_STDPAR STREQUAL "multicore")
   endif()
   target_compile_options(tc_flags INTERFACE -stdpar=multicore)
   target_link_options   (tc_flags INTERFACE -stdpar=multicore)
-else() # off → host serial; lib/numerics/parallel.hpp picks std::execution::seq (no TBB dep)
+else() # off → host serial; src/numerics/parallel.hpp picks std::execution::seq (no TBB dep)
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_OFF)
 endif()
 
@@ -51,8 +51,8 @@ message(STATUS "TurboChook compiler       : ${CMAKE_CXX_COMPILER_ID}")
 add_library(turbochook INTERFACE)
 target_link_libraries(turbochook INTERFACE tc_flags)
 
-# ── app executables (activate as sources land in app/) ───────────────────────
-file(GLOB TC_APPS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/app/*.cpp)
+# ── executables (top-level src/*.cpp are the thin mains; subdir *.hpp is the lib)
+file(GLOB TC_APPS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 foreach(src ${TC_APPS})
   get_filename_component(name ${src} NAME_WE)
   add_executable(${name} ${src})
