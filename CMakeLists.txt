@@ -65,7 +65,7 @@ if(BUILD_TESTING)
   include(FetchContent)
   FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG        v2.4.11)
+    GIT_TAG        v2.5.3)
   FetchContent_MakeAvailable(doctest)
 
   file(GLOB TC_TEST_SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/test_*.cpp)
