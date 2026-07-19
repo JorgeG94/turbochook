@@ -9,7 +9,7 @@ Goal: prove the build + GPU offload before any physics.
 
 - CMake project (the `CMakeLists.txt` sketch exists), C++23, the three build configs
   (`TC_STDPAR` = gpu / multicore / off).
-- `lib/numerics/parallel.hpp` — the `tc::par` execution-policy seam (`par_unseq`, or `seq`
+- `src/numerics/parallel.hpp` — the `tc::par` execution-policy seam (`par_unseq`, or `seq`
   under `TC_STDPAR_OFF`) + `for_each_cell`.
 - A `saxpy` and a `std::transform_reduce` over a big array via `tc::par`.
 - **doctest wired via CTest** (`FetchContent` + `doctest_discover_tests`) with one trivial
@@ -43,9 +43,9 @@ Goal: the proof-of-concept, and *not* a throwaway — this **is** the ocean core
 
 - **Arakawa C-grid** staggered `BaroState` (η centres, u/v faces) from the Arena.
 - Operators as compile-time policies (DESIGN §5): **`Continuity`** (PPM thickness flux),
-  **`Coriolis`** (Sadourny PV-conserving), **`PGF`** (`-g ∇η`). Port the numerics from
-  Rakali `src/core/ocean/`; the algorithm, not the source. **Exact file→procedure map:
-  [`PORTING_MAP.md`](PORTING_MAP.md)** (items 1–6 + the driver are M2).
+  **`Coriolis`** (Sadourny PV-conserving), **`PGF`** (`-g ∇η`). Implement the
+  numerics (continuity-PPM, Sadourny PV Coriolis, FV pressure gradient) — the
+  established published methods, on their own terms.
 - **Split-explicit** time integration (`Integrator` policy: fast barotropic substeps) — start
   with a single explicit forward-backward if that's simpler, build to the split.
 - Boundaries: **wall** + **periodic** as `BC` policies, halo-row fill before each stage
@@ -61,8 +61,9 @@ confirmed in nsys. This rung proves the C-grid + split-explicit machinery — th
 
 ## M3 — Two layers → baroclinic instability (the "it's a real ocean model" rung)
 
-Goal: make **eddies from physics, not numerics** (the Rakali `ocean_eddy_certification`
-lesson). A stacked-shallow-water **2-layer Phillips** model.
+Goal: make **eddies from physics, not numerics** — under-resolved runs make
+NUMERICAL eddies that masquerade as physical ones, so certify against that. A
+stacked-shallow-water **2-layer Phillips** model.
 
 - Second layer; per-layer thickness + the co-located tracer path (`SystemView<N>`, S/T at
   centres); `PGF = gprime` (2-layer reduced gravity); barotropic/baroclinic split proper.
@@ -87,5 +88,5 @@ energy/enstrophy behave; GPU-stable over a long run.
 ## Later (the long arc toward full parity)
 
 - More layers, more vcoords, tides, real forcing, tripolar/unstructured `Mesh`. This is a
-  multi-month+ arc — Rakali's ocean core is enormous (see its CLAUDE.md). Climb one rung at a
+  multi-month+ arc — a full ocean core is enormous. Climb one rung at a
   time; a stable GPU baroclinic core is already a serious result.

@@ -8,23 +8,21 @@
 
 A GPU-native, from-scratch C++23 finite-volume solver for coastal/ocean flows, built on
 **ISO C++ standard parallelism** — `std::for_each(std::execution::par_unseq, …)` compiled
-with `nvc++ -stdpar=gpu`. It re-implements the architecture of the Rakali Fortran solver
-(`../rakali_dc`) in idiomatic modern C++, as a learning exercise for very-modern-C++ +
-GPU compute.
+with `nvc++ -stdpar=gpu`. It is a ground-up build in idiomatic modern C++, and an exercise
+in very-modern-C++ + GPU compute.
 
 **North star — the ocean dynamical core.** An Arakawa **C-grid**, continuity-PPM,
-PV-conserving-Coriolis, split-explicit hydrostatic ocean model (Rakali's `sim_type='ocean'`
-core, re-cast in C++). **Proof-of-concept on-ramp: a 2D C-grid *barotropic* shallow-water
-solver** — which *is* the ocean core's fast mode (the core minus stratification), so the PoC
-doubles as the foundation and nothing is thrown away. This deliberately targets the C-grid /
-split-explicit **ocean** regime, **not** the coastal HLL/HLLC **Godunov** regime — a
-Riemann-solver SWE would build the wrong engine. Layers, EOS, vertical coordinates, and
-vertical mixing slot in *on top* of the barotropic foundation (roadmap M3+) without
-re-touching it.
+PV-conserving-Coriolis, split-explicit hydrostatic ocean model. **Proof-of-concept on-ramp:
+a 2D C-grid *barotropic* shallow-water solver** — which *is* the ocean core's fast mode (the
+core minus stratification), so the PoC doubles as the foundation and nothing is thrown away.
+This deliberately targets the C-grid / split-explicit **ocean** regime, **not** the coastal
+HLL/HLLC **Godunov** regime — a Riemann-solver SWE would build the wrong engine. Layers, EOS,
+vertical coordinates, and vertical mixing slot in *on top* of the barotropic foundation
+(roadmap M3+) without re-touching it.
 
-Rakali's model is `do concurrent` + let NVHPC offload it. C++ stdpar is the same idea from
-the same vendor/runtime — this port is a translation between two ISO-standard parallel
-dialects, not an analogy.
+Fortran `do concurrent` + NVHPC offload and C++ `stdpar` are the same idea from the same
+vendor/runtime — two ISO-standard parallel dialects over one compiler/runtime. This project
+works in the C++ dialect; the numerics are standard C-grid ocean methods.
 
 ## 2. Prime directive — the constraint that shapes everything
 
@@ -86,8 +84,7 @@ Two distinct "array-shaped" things, two tools:
 
 - **Coalescing rule**: `layout_left` makes index 0 contiguous; iterate so the *parallel*
   (fast-varying) thread index maps to index 0 → adjacent threads touch adjacent memory.
-  (This is the C++ restatement of Rakali's "contiguous index innermost" `do concurrent`
-  rule.)
+  (This is the C++ restatement of the "contiguous index innermost" `do concurrent` rule.)
 
 ### ADR-3 — Memory: the Arena
 One monotonic bump allocator over a single flat, **managed** buffer; hands out `mdspan`
@@ -120,9 +117,10 @@ scalar-per-face and needs no Vec. See ADR-2 / §7.
 
 ### ADR-6 — Generalized vertical coordinate (ALE) is the *shape* of the core, not a bolt-on
 
-The ocean core is **thickness-based, Lagrangian-then-remap** from the ground up (MOM6/Rakali
-ALE). This is a structural commitment — retrofitting it means restructuring the state, the
-stepper, and every operator. It lives in **three places**, not one "base concept":
+The ocean core is **thickness-based, Lagrangian-then-remap** from the ground up (the ALE
+lineage of the MOM6 family of models). This is a structural commitment — retrofitting it
+means restructuring the state, the stepper, and every operator. It lives in **three places**,
+not one "base concept":
 
 1. **State (data shape):** layer thickness `h_layer` is the **prognostic** vertical variable;
    z-interfaces are **diagnostic** (`z(k) = −H + Σ_{k'<k} h`, a `z_from_h` helper). **No fixed
@@ -130,17 +128,17 @@ stepper, and every operator. It lives in **three places**, not one "base concept
    coordinate object.
 2. **Stepper (a step):** the loop advances layers freely (Lagrangian — they distort), then at
    the remap cadence regrids to the target. The `Integrator` carries a **remap hook**
-   (cadence-gated, cf. Rakali `is_thermo_step`).
+   (cadence-gated on a thermo-step counter).
 3. **Policies (two composable axes):** `Vcoord` (target-thickness generator: z*/sigma/rho/
-   hybrid — a module slot, == Rakali `ocean_vcoord_t`) × `Reconstruction` (the conservative
-   remap kernel — the **same** policy continuity + tracers use; PORTING_MAP §1, §8).
+   hybrid — a module slot) × `Reconstruction` (the conservative remap kernel — the **same**
+   policy continuity + tracers use).
 
 **Load-bearing consequence — design for vanishing layers from day one.** A general coordinate
 means layers can vanish (h→0: z* thinning, isopycnal outcrop). Every operator that divides by
 `h` must carry the thin-layer guard (`H_VANISHED` = dynamic-vanish skip/merge vs `H_DIV_EPS` =
-pure 1/0 armour — Rakali constants of record) from the start. This is Bucket-2 (carries from
-Rakali) and is the single discipline separating "GVC-ready" from "GVC-retrofit-nightmare".
-**No uniform-`dz` assumptions anywhere.**
+pure 1/0 armour — two constants with documented, distinct roles) from the start. This is a
+GPU-FV fundamental that carries over unchanged, and the single discipline separating
+"GVC-ready" from "GVC-retrofit-nightmare". **No uniform-`dz` assumptions anywhere.**
 
 **Scope:** M2 (barotropic, single layer) → GVC is degenerate (nothing to remap). "Design with
 it in mind" = shape the **M3** layered state (thickness-prognostic), operator interfaces (take
@@ -166,8 +164,7 @@ continuity + Coriolis + PGF + integrator + BC); layers/EOS/vcoord/vmix arrive M3
 | Vert. mixing (M5) | `Vmix` | PP81, KPP | only vmix |
 
 Each is a compile-time policy; the dispatch bridge (ADR-4) maps a runtime config string to
-the chosen instantiation — the same pattern as Rakali's `&ocean_*_nml` + enum dispatch, but
-resolved at compile time.
+the chosen instantiation — the compile-time form of a namelist + enum dispatch.
 
 ## 6. Key type skeletons (the settled design, in code)
 
@@ -234,10 +231,9 @@ void baro_rhs(BaroState s, BaroState k, Params p) {
     Pgf ::apply(s, k, p);   // -g grad(η) into u, v            (for_each_face)
     Cor ::apply(s, k, p);   // PV-conserving Coriolis + advection into u, v
 }
-// The continuity-PPM / PV-Coriolis / FV-PGF *formulae* are the ocean core's. Rakali's
-// src/core/ocean/ is the authoritative reference — port the numerics (the algorithm), not
-// the source. **See docs/PORTING_MAP.md for the exact file→module→procedure map.**
-// `for_each_face` is the staggered-grid twin of `for_each_cell`.
+// Implement the continuity-PPM / PV-Coriolis / FV-PGF numerics (the algorithm) — these are
+// standard C-grid ocean methods; see GPU_STDPAR_NOTES.md for the design lessons that shape
+// how they're written on the GPU. `for_each_face` is the staggered-grid twin of `for_each_cell`.
 
 // ── RK combine — per staggered field (each on its own grid extent) ──
 void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o = a·x + b·y
@@ -246,7 +242,7 @@ void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o 
 
 // ── runtime → compile-time bridge (host side, ADR-4) ──
 // std::visit picks Continuity / Coriolis / PGF instantiations from config strings — the
-// compile-time twin of Rakali's &ocean_*_nml enum dispatch. One binary, no virtuals.
+// compile-time twin of a namelist + enum dispatch. One binary, no virtuals.
 
 // (Co-located tracers S/T ride the SystemView<N> path at centres — arrives with M3 layers.)
 
@@ -255,10 +251,10 @@ void axpy_field(Field2 o, Field2 x, Field2 y, Real a, Real b, Params p);   // o 
 
 ## 6b. The physics-module pattern (class-per-module, workspace-owning)
 
-Rakali's "a derived type per physics module" (`continuity_t`, `coriolis_adv_t`, …) maps to:
-**a physics module is a class that (a) owns its arena-backed workspace and (b) satisfies a
-per-module concept.** Each *scheme variant* is its own such class; the dispatch (ADR-4) chooses
-which fills the slot.
+The classic "a derived type per physics module" (a continuity module, a Coriolis-advection
+module, …) maps to: **a physics module is a class that (a) owns its arena-backed workspace
+and (b) satisfies a per-module concept.** Each *scheme variant* is its own such class; the
+dispatch (ADR-4) chooses which fills the slot.
 
 ```cpp
 template <class M>
@@ -267,7 +263,7 @@ concept CoriolisModule = requires(M m, Arena& a, const Mesh& mesh, BaroState s, 
     { m.compute(s, k, p) };                 // adds the Coriolis tendency into k, using m's workspace
 };
 
-class SadournyEnstrophy {                   // == Rakali coriolis_adv_t (enstrophy path)
+class SadournyEnstrophy {                   // the enstrophy-conserving Coriolis-advection module
     Field2 q_, fcor_;                       // persistent workspace, arena-backed
 public:
     void init(Arena& a, const Mesh& m) { q_ = a.alloc2d<Real>(m.nx+1, m.ny+1); fcor_ = m.f_corner(); }
@@ -282,34 +278,31 @@ public:
 
 Rules:
 - **Workspace lives on the module, allocated from the Arena in `init`.** Because the arena is
-  managed memory, `init(Arena&)` subsumes Rakali's alloc **+ `enter_data`** — the whole
-  `ocean_state_enter_data` orchestrator (and its 150–1500× memcpy-explosion footgun) does not
-  exist here.
+  managed memory, `init(Arena&)` subsumes the classic alloc **+ device-map** step — there is
+  no separate enter-data orchestration to maintain, and none of its memcpy-explosion footguns.
 - **`compute` hoists member views into locals, then the kernel captures `[=]` — never `this`.**
-  Direct analog of Rakali's "map the components, not the aggregate DT" + the
-  `!$acc update self(obj%arr_x, …)` rule.
-- **The god-state `OceanCore<Cont, Cor, Pgf, Integ>`** composes the chosen module classes
-  (== `ocean_state_t` slot map); `baro_rhs` = the sum of `module.compute(s, k)` calls.
-- **Dispatch:** `std::variant` / `std::visit` picks the variant class at config time
-  (== Rakali `&ocean_*_nml form=` + `parse_*_variant` + `select case`, made compile-time).
+  This is the general rule for passing device data across a value-semantic boundary: pass the
+  component views, not an aggregate handle.
+- **The god-state `OceanCore<Cont, Cor, Pgf, Integ>`** composes the chosen module classes;
+  `baro_rhs` = the sum of `module.compute(s, k)` calls.
+- **Dispatch:** `std::variant` / `std::visit` picks the variant class at config time — the
+  compile-time form of a namelist selector + enum dispatch.
 
 ### Continuity is generic over reconstruction — but PPM only, for now
 
 `Continuity<Reconstruction>` factors the shared FV flux-divergence from the swept-flux
-reconstruction (PPM parabola / WENO / PLM). **Build PPM only** (port from `PORTING_MAP.md` §1);
-PLM/WENO are drop-in later via the same concept — leave the seam, don't build it. The
-`Reconstruction` contract is load-bearing: **positivity-preserving + monotone** swept flux
-(thickness ≥ 0; you divide by h *everywhere*) — order of accuracy is secondary, and a WENO
-here must be the positivity-preserving flavour. The same `Reconstruction` also drives tracer
-advection later (thickness/tracer consistency), as in Rakali's `continuity_tracer_drain`.
+reconstruction (PPM parabola / WENO / PLM). **Build PPM only**; PLM/WENO are drop-in later via
+the same concept — leave the seam, don't build it. The `Reconstruction` contract is
+load-bearing: **positivity-preserving + monotone** swept flux (thickness ≥ 0; you divide by h
+*everywhere*) — order of accuracy is secondary, and a WENO here must be the positivity-
+preserving flavour. The same `Reconstruction` also drives tracer advection later
+(thickness/tracer consistency).
 
-| Rakali | turbochook |
-|---|---|
-| `coriolis_adv_t` derived type | `class SadournyEnstrophy` (module = a class) |
-| `parse_*_variant` + `select case` | `std::variant` + `std::visit` (compile-time) |
-| `init` + `enter_data` | `init(Arena&)` — arena's managed memory replaces `enter_data` |
-| "map DT, touch components" / `update self(obj%arr)` | hoist members to locals, capture `[=]`, never `this` |
-| `ocean_state_t` slot map | `OceanCore<...>` composed of module classes |
+The module pattern in one line each: a physics module = a class filling a slot; a runtime
+config string maps to the chosen class via `std::variant`/`std::visit` (compile-time);
+`init(Arena&)` replaces alloc + enter-data because the arena is managed; "hoist members to
+locals, capture `[=]`, never `this`" is the device-boundary rule; the composed
+`OceanCore<...>` is the god-state slot map.
 
 ## 7. Decisions (resolved) + the dimension/mesh seam
 
@@ -336,7 +329,8 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
 - **Structured ↔ unstructured is a DIFFERENT axis** — connectivity/iteration, not dimension;
   a `Rank` template does not get you triangles. What is shared for free is the **physics**
   (the `Continuity`/`Coriolis`/`PGF` operators); what differs is **iteration + connectivity**.
-  (Rakali proves it: shared physics modules, *separate* structured/unstructured flux kernels.)
+  (The natural factoring: shared, mesh-agnostic physics modules over *separate* structured/
+  unstructured flux-iteration kernels.)
 - **Unification path (deferred):** a `Mesh`/topology **concept** + `for_each_face(mesh, …)`
   handing the flux a `FaceView{left, right, normal, area}`. Structured computes it from
   `(i,j)`; unstructured reads connectivity tables → the flux becomes mesh-agnostic. Caveats:
@@ -358,8 +352,8 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
 ## 8. GPU hard rules (kernel-authoring checklist)
 
 - Capture **by value**; only `mdspan` views + POD params cross the boundary. Never `this`,
-  never an owner, never a `std::vector`. **VERIFIED** (`../stdpar_patterns_cpp` p04): a
-  member-function kernel that captures `this` PASSES on host but hard-crashes on the GPU with
+  never an owner, never a `std::vector`. **VERIFIED** (nvc++ 26.5 / V100): a member-function
+  kernel that captures `this` PASSES on host but hard-crashes on the GPU with
   `cudaErrorIllegalAddress` — hoist member views to locals first (the §6b `compute` discipline).
 - No virtual / exceptions / RTTI / `std::function` / allocation inside a kernel.
 - Arena **sized once, never reallocates** (else dangling mdspans).
@@ -368,17 +362,16 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
   UB). RK registers make this natural.
 - **Keep state device-resident: never touch it on the host inside the time loop.** Map once
   (the arena), ping-pong pointers/registers on device, and do host reads only at output/diag
-  cadence. **MEASURED** (`../stdpar_patterns_cpp` COMPARISON.md): a per-step host copy of the
-  state forces a host↔device migration every step and is **~120–140× slower** than resident on
-  the V100 (and a 1.0× no-op on the host build — the penalty is purely GPU migration). This is
-  the C++ managed-memory form of Rakali's enter-data-once discipline; a stray per-step
-  diagnostic copy silently reintroduces the 100× penalty.
+  cadence. **MEASURED** (nvc++ 26.5 / V100): a per-step host copy of the state forces a
+  host↔device migration every step and is **~120–140× slower** than resident (and a 1.0× no-op
+  on the host build — the penalty is purely GPU migration). This is the managed-memory form of
+  the map-once discipline; a stray per-step diagnostic copy silently reintroduces the 100×
+  penalty.
 - **Verify offload.** A green CPU/serial run proves correctness, *not* that it offloaded.
-  With nsys: confirm kernels in the timeline. **nsys is currently broken on the DGX box**, so
-  the working substitute is **verify-by-speed**: build `gpu` + `host` and require
-  `gpu/host ≫ 1` on a big problem (a build can report `backend=gpu` yet run at host speed if it
-  didn't offload). See `../stdpar_patterns_cpp/scripts/gpu_check.sh` (asserts the ratio) —
-  the toolchain patterns turbochook depends on are already verified there on nvc++ 26.5 / V100.
+  With nsys: confirm kernels in the timeline. When nsys is unavailable, the working substitute
+  is **verify-by-speed**: build `gpu` + `host` and require `gpu/host ≫ 1` on a big problem
+  (a build can report `backend=gpu` yet run at host speed if it didn't offload). These
+  toolchain patterns are verified on nvc++ 26.5 / V100.
 
 ## 9. Build & toolchain
 
@@ -391,33 +384,32 @@ advection later (thickness/tracer consistency), as in Rakali's `continuity_trace
   `layout_left` `tc::mdview` (~40 lines — the sliver we use: ctor from ptr+extents,
   `operator[](i,j[,k])`, `extent()`, `data_handle()`) behind a `__has_include(<mdspan>)` seam
   in `core/types.hpp`. **Never Kokkos.**
-  **VERIFIED** (nvc++ 26.5 / V100, `../stdpar_patterns_cpp` p05_mdspan): `std::mdspan<layout_left>`
-  with the `m[i,j]` subscript **offloads and is zero-cost** vs manual index math; the fallback
-  path works on g++13 (no `<mdspan>`). **Gate on `__has_include(<mdspan>)` ONLY** — nvc++ 26.5
-  leaves `__cpp_lib_mdspan` UNDEFINED despite a working `<mdspan>`, so the feature-test macro
-  would wrongly reject it.
+  **VERIFIED** (nvc++ 26.5 / V100): `std::mdspan<layout_left>` with the `m[i,j]` subscript
+  **offloads and is zero-cost** vs manual index math; the fallback path works on g++13 (no
+  `<mdspan>`). **Gate on `__has_include(<mdspan>)` ONLY** — nvc++ 26.5 leaves `__cpp_lib_mdspan`
+  UNDEFINED despite a working `<mdspan>`, so the feature-test macro would wrongly reject it.
 
 ### Dependency policy
 
-- **stdlib-first.** `lib/core/` depends on nothing but the C++ stdlib — the stdlib is what
-  replaces Rakali's `pic`.
+- **stdlib-first.** `src/core/` depends on nothing but the C++ stdlib — the stdlib is the
+  only dependency the core needs (`std::format`/`print`, `mdspan`, parallel algorithms,
+  `chrono`, `source_location`).
 - **doctest** is the only dependency, and it is **test-only** (fetched, never shipped).
 - **No Kokkos, ever** — not the framework, not `kokkos/mdspan`.
-- **Escape valve:** if heavy machinery is ever genuinely needed, bridge to **Rakali's Fortran
-  via a C ABI** (it already ships an `iso_c_binding` FFI), rather than adopt a C++ framework
-  (Kokkos, Eigen, Trilinos, …). Reuse *our* code across a C boundary before importing someone
-  else's across a C++ one.
+- **Escape valve:** if heavy machinery is ever genuinely needed, prefer a **C-ABI bridge to a
+  small external routine** over adopting a heavy C++ framework (Kokkos, Eigen, Trilinos, …).
+  Reuse a focused routine across a C boundary before importing someone else's across a C++ one.
 
 ## 10. Testing
 
 **Framework: doctest** (single-header, fetched via CMake `FetchContent`, fastest compiles) —
-one runner through **CTest** (matches the Rakali muscle memory). Two tiers:
+one runner through **CTest**. Two tiers:
 
 - **Unit** — instantiate a few cells, call one kernel, assert against hand-computed values.
   Kernels are pure free functions over views ⇒ testable on host with `std::execution::seq`.
   (`tc::Vec` ops, the `Continuity`/`Coriolis`/`PGF` operators on a tiny grid, `Arena`, the
   `Profiler` self-time math.)
-- **Analytical** — the highest-leverage class (every one caught a real bug in Rakali):
+- **Analytical** — the highest-leverage class (each one tends to catch a real bug):
   **geostrophic adjustment** (relaxes to the correct balanced state), **lake-at-rest**
   (well-balanced — flat η stays flat), a **Kelvin/Rossby wave** (right propagation speed),
   **conservation** (total-mass drift ~ machine eps); at M3+, a **baroclinic-instability**
@@ -425,16 +417,15 @@ one runner through **CTest** (matches the Rakali muscle memory). Two tiers:
 
 Add a test with (or before) each kernel. Float asserts use a tolerance (`doctest::Approx`).
 
-**The execution-policy seam** (so host tests need no TBB): `lib/numerics/parallel.hpp` defines
+**The execution-policy seam** (so host tests need no TBB): `src/numerics/parallel.hpp` defines
 `tc::par` = `std::execution::par_unseq` normally, but `std::execution::seq` under the
 `TC_STDPAR_OFF` define (the host build). `for_each_cell` uses `tc::par`. → the GPU/multicore
 builds offload; the host-serial test build is deterministic and dependency-free.
 
-**GPU testing rule (CPU-green ≠ GPU-correct — the Rakali lesson):** the suite compiles in all
-three configs. CI runs the host-serial suite (fast); **additionally run the analytical suite
-under the `-stdpar=gpu` build periodically** — that is what catches offload/data-motion bugs a
-host run is blind to. Never `ctest -jN` on the GPU build (workers share one GPU → spurious
-failures).
+**GPU testing rule (CPU-green ≠ GPU-correct):** the suite compiles in all three configs. CI
+runs the host-serial suite (fast); **additionally run the analytical suite under the
+`-stdpar=gpu` build periodically** — that is what catches offload/data-motion bugs a host run
+is blind to. Never `ctest -jN` on the GPU build (workers share one GPU → spurious failures).
 
 ## 11. Non-goals (for now)
 
@@ -453,6 +444,5 @@ pressure is an extra `PGF`-style operator, the projection stepper is another `In
 the elliptic solve is a **bolt-on subsystem** (it does *not* fit the local-stencil policy
 pattern — it is globally coupled + iterative + preconditioned, the hardest GPU piece). **Caveat
 — NH ⟂ ALE:** a thickness-prognostic Lagrangian grid (ADR-6) and the NH elliptic operator do
-not coexist cleanly; an NH regime would use a fixed/sigma vertical grid (as Rakali's separate
-NH path does). So NH is a distinct regime — seam-ed, not built — and must not distort the
-hydrostatic core.
+not coexist cleanly; an NH regime would use a fixed/sigma vertical grid (a separate NH path).
+So NH is a distinct regime — seam-ed, not built — and must not distort the hydrostatic core.

@@ -1,19 +1,21 @@
-# TurboChook — Foundations (`lib/core/`) & Directory Layout
+# TurboChook — Foundations (`src/core/`) & Directory Layout
 
-The foundational, physics-free layer — turbochook's equivalent of Rakali's `pic`, but far
+The foundational, physics-free layer — a thin base, far
 smaller because the C++23 stdlib gives us most of it (`std::format`/`std::print`,
 `std::expected`, `std::source_location`, `std::mdspan`, `std::chrono`, parallel algorithms).
 
 ## 1. Directory layout — *where things go matters*
 
-`lib/` **is** the library, header-first (templated device code must be visible at the call
+`src/` holds all the sources, header-first (templated device code must be visible at the call
 site → mostly `.hpp`). Host-only pieces with global state or heavy includes may have a
-paired `.cpp`.
+paired `.cpp`. No package manager, so there is no separate `app/` — thin `main`s are the
+top-level `src/*.cpp`, the library is the subdirectories.
 
 ```
 turbochook/
-├── lib/                          # the library
-│   ├── core/                     # FOUNDATION — zero physics. The "pic" of turbochook.
+├── src/                          # all sources
+│   ├── m0_walking_skeleton.cpp   # a thin main (top-level *.cpp = an executable)
+│   ├── core/                     # FOUNDATION — zero physics; the base layer.
 │   │   ├── types.hpp             # Real, Index, Field<Rank> = mdspan<layout_left>, aliases
 │   │   ├── vec.hpp               # tc::Vec<N> — fixed-size numeric vector (glm-style; NOT std::vector/Eigen)
 │   │   ├── log.hpp               # Logger (std::format/std::print), levels, global accessor
@@ -25,7 +27,6 @@ turbochook/
 │   ├── numerics/                 # parallel.hpp (for_each_cell / for_each_face), integrator.hpp
 │   ├── bc/                       # boundary-condition policies
 │   └── io/                       # field dump, config parsing
-├── app/                          # thin executables (swe2d.cpp wires config → solver → output)
 ├── tests/                        # host-serial analytical tests (test_*.cpp)
 ├── docs/
 └── CMakeLists.txt
@@ -33,7 +34,7 @@ turbochook/
 
 - **Namespace:** a single flat `tc` namespace (short call sites — `tc::Continuity`, not
   `tc::physics::Continuity`). Directories organise files, not namespaces.
-- **Include path:** `lib/` is on the include path → `#include "core/log.hpp"`,
+- **Include path:** `src/` is on the include path → `#include "core/log.hpp"`,
   `#include "physics/coriolis.hpp"`. No deep `<turbochook/...>` prefix for a standalone repo.
 - **Dependency rule:** `core/` depends on nothing but the stdlib. Everything depends on
   `core/`. Physics/numerics/bc never include each other's internals — they compose through
@@ -275,7 +276,7 @@ int main() try {
 }
 ```
 
-### Error philosophy — the host/device split (mirrors Rakali fail-loud)
+### Error philosophy — the host/device split (fail-loud)
 
 - **Host** (config, setup, I/O, dispatch, step boundary): `throw tc::Error`; catch once at
   `main`; RAII cleans up on unwind. Bad config / unknown scheme fail **at setup**, not mid-run.
@@ -290,15 +291,15 @@ int main() try {
 
 ## 5. `core/profiler.hpp` — nested-region timing (RAII, `steady_clock`)
 
-Port of Rakali's hierarchical profiler (active-region stack + per-region `child_time` →
+A hierarchical profiler (active-region stack + per-region `child_time` →
 **self = total − child**; flat report by default, opt-in tree with inclusive/self columns).
 C++ makes it cleaner: **RAII scopes** replace manual start/stop — a guard starts on
 construction, stops on destruction, so nesting is LIFO-by-construction and exception-safe.
 
 Use **`std::chrono::steady_clock`** (monotonic) — *not* `high_resolution_clock`, which is
 often `system_clock` and can jump backwards under clock adjustment. Host-side wall-clock
-around a `for_each(par_unseq, …)` measures the kernel because stdpar syncs per call (same as
-`do concurrent`); use NVTX/nsys for the fine GPU timeline later.
+around a `for_each(par_unseq, …)` measures the kernel because stdpar syncs per call; use
+NVTX/nsys for the fine GPU timeline later.
 
 ```cpp
 #pragma once
