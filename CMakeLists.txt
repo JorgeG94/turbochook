@@ -44,6 +44,24 @@ else() # off → host serial; src/numerics/parallel.hpp picks std::execution::se
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_OFF)
 endif()
 
+# ── NetCDF output (optional; thin C-ABI bridge over libnetcdf-c, per the dep policy)
+#    -DTC_NETCDF=ON -DNETCDF_ROOT=<prefix>  (prefix has include/netcdf.h + lib/libnetcdf)
+option(TC_NETCDF "Build with NetCDF output (needs libnetcdf-c)" OFF)
+if(TC_NETCDF)
+  set(NETCDF_ROOT "" CACHE PATH "NetCDF-C install prefix")
+  find_path   (NETCDF_INCLUDE_DIR netcdf.h HINTS ${NETCDF_ROOT}/include ENV NETCDF_DIR)
+  find_library(NETCDF_LIBRARY NAMES netcdf HINTS ${NETCDF_ROOT}/lib     ENV NETCDF_DIR)
+  if(NOT NETCDF_INCLUDE_DIR OR NOT NETCDF_LIBRARY)
+    message(FATAL_ERROR "TC_NETCDF=ON but netcdf not found — set -DNETCDF_ROOT=<prefix>.")
+  endif()
+  get_filename_component(_nc_libdir ${NETCDF_LIBRARY} DIRECTORY)
+  target_compile_definitions(tc_flags INTERFACE TC_HAVE_NETCDF)
+  target_include_directories(tc_flags INTERFACE ${NETCDF_INCLUDE_DIR})
+  target_link_libraries     (tc_flags INTERFACE ${NETCDF_LIBRARY})
+  target_link_options       (tc_flags INTERFACE "-Wl,-rpath,${_nc_libdir}")  # find the prefixed .so at runtime
+  message(STATUS "TurboChook NetCDF         : ${NETCDF_LIBRARY}")
+endif()
+
 message(STATUS "TurboChook stdpar backend : ${TC_STDPAR}")
 message(STATUS "TurboChook compiler       : ${CMAKE_CXX_COMPILER_ID}")
 
