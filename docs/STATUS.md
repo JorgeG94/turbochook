@@ -8,64 +8,78 @@ contributor (human or agent) needs so they don't re-derive them. Read this after
 
 ## Where we are
 
-**Milestone 0 (walking skeleton) is complete and host-verified.** The toolchain,
-the iteration seam, the test harness, and the whole compile-time policy stack build
-and run. No real physics yet — the M2 operator bodies are stubs.
+**M2 (single-layer operators) and M3-stage-1 (two-layer core) are complete and
+validated — host-green and GPU-offload-verified.** The north star is a **two-layer
+baroclinic-instability** run (emulating `../two_layer_sw`); the physics engine for
+it now exists and every mode is validated. Remaining work is the *run*: a jet IC,
+light dissipation, and rendering.
 
 ### What's built
 
 ```
 src/core/     types.hpp      Real/Index + Field<Rank> (mdspan ↔ MdView seam)
-src/lib/      log.hpp        std::format/print logger, compile-time-checked
-              error.hpp      exceptions + source_location, host/device split
-              arena.hpp      size-once bump allocator; hands out Field views
-              profiler.hpp   RAII nested-region timing (self vs inclusive)
-src/numerics/ parallel.hpp   tc::par seam (par_unseq ↔ seq) + for_each_cell/face
-              integrator.hpp Integrator concept + SSPRK2 / ForwardEuler (stubs)
-src/mesh/     cartesian_mesh.hpp   Mesh concept + CartesianMesh model
-src/physics/  reconstruction.hpp   Reconstruction concept + PCM/PLM/PPM/PQM/WENO
-              baro_state.hpp       staggered C-grid BaroState + Params
-              continuity.hpp       ContinuityModule + ContinuityFlux<R> (PPM)
-              coriolis.hpp         CoriolisModule + SadournyEnstrophy
-              pgf.hpp              PgfModule + FvPgf
-              ocean_core.hpp       OceanCore<Cont,Cor,Pgf,Bc,Integ> composition
-src/bc/       bc.hpp         BoundaryCondition + WallBC / PeriodicBC
-src/          m0_walking_skeleton.cpp   (thin main; top-level *.cpp = executable)
-tests/        test_m0.cpp    (5 doctest cases)
+src/lib/      log/error/arena/profiler.hpp   plumbing (unchanged from M0)
+src/numerics/ parallel.hpp   tc::par seam + for_each_cell/face
+              integrator.hpp Integrator concept + SSPRK2 / SSPRK3 / ForwardEuler
+                             — advance() is generic over the state type
+src/mesh/     cartesian_mesh.hpp   CartesianMesh (uniform beta-plane)
+              spherical_mesh.hpp   SphericalMesh (lat/lon, f=2Ω sinφ)
+              masked_mesh.hpp      MaskedMesh (land/sea wet() mask)
+              iterate.hpp          for_each_x_face / y_face (interior faces)
+src/physics/  reconstruction.hpp   PCM/PLM/PPM/PQM/WENO5/7/9 (Wall vs Face concepts)
+              baro_state.hpp       C-grid BaroState + Params (+H1,H2,rho1,rho2)
+              continuity.hpp       ContinuityFlux<Ppm>  (flux-form, telescoping)
+              coriolis.hpp         SadournyEnstrophy    (PV-flux, KE gradient)
+              pgf.hpp              FvPgf                 (single-layer -g∇η)
+              ocean_core.hpp       OceanCore<...>  → BarotropicPoC
+              layered_state.hpp    LayeredState<NL> = NL BaroStates  [M3]
+              two_layer_pgf.hpp    TwoLayerReducedGravityPgf (baroclinic coupling) [M3]
+              multilayer_core.hpp  TwoLayerCore<...> → TwoLayerPoC   [M3]
+src/bc/       bc.hpp         WallBC / PeriodicBC
+src/          demo_*.cpp     geostrophic / basin PPM-frame renderers
+tests/        test_*.cpp     43 doctest cases
 ```
 
-### Verified (host build, g++13)
+### Verified
 
-- Builds clean; `m0_walking_skeleton` runs; the parallel reduction equals the serial
-  reference to machine precision.
-- `ctest` 5/5 green; the profiler tree shows correct region nesting.
-- The `tc::MdView` fallback is the live path on g++13 (no `<mdspan>` there), so the
-  `__has_include` seam works both ways.
+**Single layer (M2), GPU-offload-confirmed (~30× over host on a big problem):**
+- Gravity wave `c = √(gH)` to **0.003%**; geostrophic balance held to machine-eps.
+- Mass conservation to ~1e-12 (telescoping continuity); Coriolis via Sadourny.
+- Root-caused a blow-up to **SSP-RK2 instability on the imaginary axis** (gravity
+  waves); the one-line policy swap to **SSP-RK3** fixed it — energy then conserved
+  <0.2%. (RK2/Heun amplifies every oscillatory mode; RK3's region includes the
+  imaginary axis to |ωΔt|≲1.73.)
 
-### Not yet done
+**Two layer (M3), host-green:**
+- Reduced-gravity PGF coupling: linear h₁,h₂ → **exact** −∇p₁, −∇p₂.
+- Two-layer lake-at-rest → zero RHS (well-balanced across the coupling).
+- Barotropic mode `√(g(H₁+H₂))` to 3%; **baroclinic (internal) mode
+  `√(g'H₁H₂/(H₁+H₂))` to 0.1%** — the actually-new stratified physics.
 
-- **Every `compute()` is a `// TODO(M2)` stub.** The types, concepts, and
-  composition are real and type-check; the numerics are empty.
-- No GPU-build offload check yet (`nvc++ -stdpar=gpu`); no multicore build check.
+### Key modelling facts established
+
+- **Unsplit, external-CFL limited.** `dt < CFL·dx/√(g(H₁+H₂))` (fast external gravity
+  wave). No barotropic subcycling — this matches the reference's `bc_inst` (`M=0`,
+  `dt=6s`). Split-explicit is a future ~M× optimization, not required. A layered
+  (isopycnal) core has **no vertical-advection CFL**.
+- **The instability run must resolve `Rd_bc = c'/f`** (~17 km with H=200/800,
+  Δρ=2). Under-resolving it makes the eddies rotation-smeared (the reference uses
+  ~5 km). Wave-speed *tests* use f=0 to isolate the gravity wave.
 
 ---
 
-## Next steps (M2 — fill the operators)
+## Next steps (M3-stage-2 — the baroclinic-instability run)
 
-Smallest-first, each with an analytical test written alongside (DESIGN §10):
+1. **`RunConfig` struct + presets** (code-first, no input-file format) mirroring the
+   Julia `bc_inst` case: domain, H₁/H₂, ρ, f₀/β, dt, output cadence.
+2. **Baroclinic-jet IC** — a geostrophically-balanced tilted interface + a
+   perturbation to seed the instability (port from `../two_layer_sw` / `../rakali_dc`).
+3. **Light dissipation** operator (Laplacian/Leith viscosity ± Shapiro filter) to
+   control the enstrophy cascade — a new module on its own axis.
+4. **Run + render** the eddy field → the video.
 
-1. **`FvPgf::compute`** — `-g ∂η/∂x` onto u-faces, `-g ∂η/∂y` onto v-faces. No
-   workspace, no reconstruction — the gentlest first real kernel. Test:
-   **lake-at-rest** (flat η stays flat — well-balancedness).
-2. **`ContinuityFlux<Ppm>::compute`** — the PPM swept thickness flux;
-   `∂η/∂t = -∇·(H u)`. Test: **mass conservation** (total-mass drift ~ machine eps).
-3. **`SadournyEnstrophy::compute`** — PV `q = (f+ζ)/h` at corners, PV-flux into u/v.
-4. **The `Integrator` + BC halo fill**, then the ocean test cases: **geostrophic
-   adjustment**, a **Kelvin/Rossby wave** at the right speed.
-5. **GPU offload check** on a real M2 run (verify-by-speed).
-
-See [`ROADMAP.md`](ROADMAP.md) for M3+ (layers → baroclinic instability → EOS/vcoord
-→ vertical mixing).
+Deferred (post-video, per the user): full tracer chain (PCM→WENO9) + advection-scheme
+study + FP32 mixed precision. See [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
