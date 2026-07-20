@@ -28,15 +28,6 @@
 
 namespace tc {
 
-// Clamp-to-edge centre access — repeats the boundary value when a reconstruction
-// window overhangs the domain. The no-ghost interim's boundary reconstruction
-// (DESIGN #3); a real halo fill supersedes it. Metric-free (indices only).
-inline Real clamp_at(Field2 h, Index i, Index j, Index nx, Index ny) {
-    i = i < 0 ? 0 : (i >= nx ? nx - 1 : i);
-    j = j < 0 ? 0 : (j >= ny ? ny - 1 : j);
-    return h[i, j];
-}
-
 // The per-module concept: init your workspace from the Arena, then compute the
 // tendency into `k` using state `s`. (`ContinuityModule`, `CoriolisModule`, and
 // `PgfModule` are structurally identical right now — same {init; compute}. The

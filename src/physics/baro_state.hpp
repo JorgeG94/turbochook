@@ -28,6 +28,15 @@
 
 namespace tc {
 
+// Clamp-to-edge centre access — repeats the boundary value when a stencil window
+// overhangs the domain (the no-ghost interim's boundary handling, DESIGN #3; a real
+// halo fill supersedes it). Shared by continuity + Coriolis. Metric-free.
+inline Real clamp_at(Field2 h, Index i, Index j, Index nx, Index ny) {
+    i = i < 0 ? 0 : (i >= nx ? nx - 1 : i);
+    j = j < 0 ? 0 : (j >= ny ? ny - 1 : j);
+    return h[i, j];
+}
+
 // The prognostic barotropic state. Copying a BaroState copies three view handles
 // (cheap); the doubles live in the Arena. RK stages are just more BaroStates
 // (extra register sets) pointing at their own arena slices — see the Integrator.
