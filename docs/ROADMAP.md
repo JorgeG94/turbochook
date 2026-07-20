@@ -99,14 +99,21 @@ north star ("split-explicit") and what makes a 300-day integration a routine job
 **Acceptance:** split run reproduces the unsplit `bc_inst` statistics (eddy scale, growth,
 energy/mass) with `M`-fold fewer layered RHS evals and a measured `≥10×` speedup; GPU-stable.
 
-**Progress:** Stages 1–5 done (`BarotropicSolver` FB substep, `derive_bt_from_layers`,
-`depth_mean_faces`, `SplitTwoLayerCore`). Oracle passes — a two-layer barotropic wave
-through the split recovers `√(g(H₁+H₂))` at outer CFL≈2. `demo_baroclinic_split` rolls the
-`bc_inst` jet into spiral eddies at `dt=120s` (M=10), **20× fewer layered evals**, mass to
-0.01%. **Open:** the forward-Euler *outer* step amplifies the internal gravity wave and blows
-up ~day 30 (imaginary-axis instability, same failure mode as SSP-RK2). **Fix:** wrap the split
-stage in an **SSP-RK3 outer** (imaginary-axis-stable) — the remaining M3.5 work for stable
-long runs.
+**Status: working & stable.** Stages 1–5 done (`BarotropicSolver` FB substep,
+`derive_bt_from_layers`, `depth_mean_faces`, `SplitTwoLayerCore`) + the **outer-scheme policy**
+(`OuterFwdEuler`/`OuterSSPRK2`/`OuterSSPRK3`). Oracle passes with RK2 and RK3 — a two-layer
+barotropic wave through the split recovers `√(g(H₁+H₂))` at outer CFL≈2. `demo_baroclinic_split`
+rolls the `bc_inst` jet into a clean turbulent eddy field at `dt=120s` (M=10), **20× fewer
+layered evals**, mass to 0.01%, over a full 55-day run with **no blow-up**.
+
+The forward-Euler outer amplified the internal gravity wave `((ωΔt)²)` and blew up ~day 30;
+the **SSP-RK3 outer** (bounded for `|ωΔt|<1.73`) cured it — `|v1|max` now SATURATES ~0.9
+(physical) and the field stays clean (no internal-wave speckle). RK2 (rakali's choice,
+`(ωΔt)⁴` growth) is available for comparison but wants real viscosity.
+
+**Remaining M3.5 polish:** measure the speedup vs unsplit head-to-head at matched accuracy;
+tune the largest stable `dt` (RK3 allows `|ωΔt|<1.73` ⇒ `dt` up to ~800s / M~55); optional
+scale-selective closure so RK2 is viable; wire onto the spherical periodic-x production run.
 
 ## M4 — EOS + FV pressure gradient + a vertical coordinate
 
