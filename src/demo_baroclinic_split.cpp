@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     tc::Arena arena(std::size_t(N) * N * 3 * 8 * 24 + (64u << 20));
     tc::Params p{ .nx = N, .ny = N, .dx = dxmin, .dy = mesh.dy(Loc::Center, 0, 0), .dt = dt,
                   .g = g, .H = H1 + H2, .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
-    constexpr int Msub = 10;   // barotropic FB substeps per baroclinic step
+    constexpr int Msub = 24;   // 512^2 needs more FB substeps (finer dx -> smaller barotropic CFL)
     tc::SplitTwoLayerCore<tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
                           tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p);
     core.init();
