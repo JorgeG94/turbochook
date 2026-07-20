@@ -112,8 +112,21 @@ the **SSP-RK3 outer** (bounded for `|ωΔt|<1.73`) cured it — `|v1|max` now SA
 `(ωΔt)⁴` growth) is available for comparison but wants real viscosity.
 
 **Remaining M3.5 polish:** measure the speedup vs unsplit head-to-head at matched accuracy;
-tune the largest stable `dt` (RK3 allows `|ωΔt|<1.73` ⇒ `dt` up to ~800s / M~55); optional
-scale-selective closure so RK2 is viable; wire onto the spherical periodic-x production run.
+tune the largest stable `dt` (RK3 allows `|ωΔt|<√3` ⇒ `dt_max ≈ 0.55·dx/c_int`: ~850s at 256²,
+~427s at 512² — verified empirically); optional scale-selective closure so RK2 is viable; wire
+onto the spherical periodic-x production run.
+
+**M3.5 perf — FUSE the barotropic substep (the big lever).** nsys on a GH200 shows the FB
+subcycle is LAUNCH-bound: ~18 tiny `for_each` per substep × M × 3 RK3 stages, each ~15 µs
+dominated by launch overhead (so cheaper kernels barely help — the Pcm-vs-PPM swap gave only
+~10%). Fuse the substep to **~4 kernels** via double-buffering (read-old/write-new, kernel rule
+#7): (1) η — inline Pcm flux + divergence → η_new; (2) ζ at corners; (3) u — backward −g∇η_new +
+(ζ+f)v + inline KE-grad + apply → u_new; (4) v — mirror; then swap η/u/v handles. Re-implements
+the barotropic continuity/Coriolis/PGF in fused form (the layered ops keep their multi-pass
+generic form). **Target ~3–4× on the subcycle** (most on launch-bound HW like the GH200).
+**Gates:** gravity wave `√(gH)` AND lake-at-rest AND a bc_inst eddy-field A/B vs the current
+output — a fused kernel can pass the 1-D wave oracle yet corrupt the 2-D eddies, so validate all
+three. (Also: NVTX ranges via `tc::profiler` so nsys shows named regions, not cub soup.)
 
 ## M4 — EOS + FV pressure gradient + a vertical coordinate
 
