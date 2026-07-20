@@ -50,16 +50,17 @@ struct SSPRK2 {
     // register; `BcOp` fills halos. These callables run on the HOST and internally
     // launch the for_each kernels — so THEY may capture `this` of the OceanCore; only
     // the innermost kernel lambdas must not.
-    template <class RhsOp, class BcOp>
-    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
+    template <class State, class RhsOp, class BcOp>
+    static void advance(State s, std::span<State> scratch, RhsOp rhs, BcOp bc, Params p) {
         // Heun / SSP-RK2 in Shu–Osher low-storage form (2 registers): predictor s1,
         // tendency k. `s` stays the un-touched s^n until the final average, so no
-        // separate save register is needed.
+        // separate save register is needed. Generic over the state type (BaroState
+        // or LayeredState) — axpby is resolved by ADL.
         //   s1 = s + dt·L(s)                              (stage-1 predictor)
         //   s1 = s1 + dt·L(s1)                            (stage-2, reuse k)
         //   s  = ½·s + ½·s1                               (= s^{n+1})
-        BaroState k  = scratch[0];
-        BaroState s1 = scratch[1];
+        State k  = scratch[0];
+        State s1 = scratch[1];
         const Real dt = p.dt;
 
         bc(s);   rhs(s, k);                       // k = L(s^n)
@@ -74,9 +75,9 @@ struct SSPRK2 {
 // One tendency register.
 struct ForwardEuler {
     static constexpr int n_scratch = 1;
-    template <class RhsOp, class BcOp>
-    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
-        BaroState k = scratch[0];
+    template <class State, class RhsOp, class BcOp>
+    static void advance(State s, std::span<State> scratch, RhsOp rhs, BcOp bc, Params p) {
+        State k = scratch[0];
         bc(s); rhs(s, k);                        // k = L(s^n)
         axpby(s, Real(1), s, p.dt, k);           // s^{n+1} = s^n + dt·L(s^n)
     }
@@ -88,10 +89,10 @@ struct ForwardEuler {
 // (√(1+(ωΔt)⁴/4) > 1) and the 2Δx grid mode blows up. Same 2 registers as RK2.
 struct SSPRK3 {
     static constexpr int n_scratch = 2;
-    template <class RhsOp, class BcOp>
-    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
-        BaroState s0 = scratch[0];       // saved s^n (needed at every stage combine)
-        BaroState k  = scratch[1];       // tendency
+    template <class State, class RhsOp, class BcOp>
+    static void advance(State s, std::span<State> scratch, RhsOp rhs, BcOp bc, Params p) {
+        State s0 = scratch[0];           // saved s^n (needed at every stage combine)
+        State k  = scratch[1];           // tendency
         const Real dt = p.dt;
 
         axpby(s0, Real(1), s, Real(0), s);                       // s0 = s^n

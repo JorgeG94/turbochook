@@ -56,6 +56,8 @@ struct Params {
     Real  dt;          // time step
     Real  g;           // gravity
     Real  H;           // mean/reference depth (barotropic wave speed = sqrt(g·H))
+    Real  H1{}, H2{};    // two-layer rest thicknesses (M3)
+    Real  rho1{}, rho2{};// two-layer densities  (reduced gravity g' = g(ρ2-ρ1)/ρ1)
 };
 
 // Allocate a full C-grid state from the Arena, each field on its staggered
