@@ -39,13 +39,14 @@ public:
     template <Mesh M> void compute(BaroState s, BaroState k, const M& mesh, Params p) const {
         const Field2 eta = s.eta;             // hoist views → capture [=], never `this`
         const Field2 ku = k.u, kv = k.v;
+        const M      m  = mesh;               // POD copy for the wet mask (×1 all-wet)
         const Real   g  = p.g;
 
         for_each_x_face(mesh, [=](FaceView f) {
-            ku[f.i, f.j] += -g * (eta[f.ri, f.rj] - eta[f.li, f.lj]) / f.span;
+            ku[f.i, f.j] += -g * (eta[f.ri, f.rj] - eta[f.li, f.lj]) / f.span * m.wet(Loc::XFace, f.i, f.j);
         });
         for_each_y_face(mesh, [=](FaceView f) {
-            kv[f.i, f.j] += -g * (eta[f.ri, f.rj] - eta[f.li, f.lj]) / f.span;
+            kv[f.i, f.j] += -g * (eta[f.ri, f.rj] - eta[f.li, f.lj]) / f.span * m.wet(Loc::YFace, f.i, f.j);
         });
     }
 };

@@ -82,7 +82,7 @@ public:
             const Real zeta = Real(0.5) * (q[i, j] + q[i, j + 1]);                              // S+N corners
             const Real fc   = Real(0.5) * (m.coriolis(Loc::Corner, i, j) + m.coriolis(Loc::Corner, i, j + 1));
             const Real ke_gx = (ke[i, j] - ke[i - 1, j]) / m.dx(Loc::XFace, i, j);
-            ku[i, j] += (zeta + fc) * v_at_u - ke_gx;
+            ku[i, j] += ((zeta + fc) * v_at_u - ke_gx) * m.wet(Loc::XFace, i, j);   // 0 across a coast face
         });
 
         // ── Pass 3b: dv/dt at v-faces (interior j∈[1,ny-1]; walls untouched → 0). ──
@@ -98,7 +98,7 @@ public:
             const Real zeta = Real(0.5) * (q[i, j] + q[i + 1, j]);                              // W+E corners
             const Real fc   = Real(0.5) * (m.coriolis(Loc::Corner, i, j) + m.coriolis(Loc::Corner, i + 1, j));
             const Real ke_gy = (ke[i, j] - ke[i, j - 1]) / m.dy(Loc::YFace, i, j);
-            kv[i, j] += -(zeta + fc) * u_at_v - ke_gy;
+            kv[i, j] += (-(zeta + fc) * u_at_v - ke_gy) * m.wet(Loc::YFace, i, j);
         });
     }
 };

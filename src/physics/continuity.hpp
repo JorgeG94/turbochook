@@ -89,7 +89,8 @@ public:
             const Real hL_east = Scheme::reconstruct(east).at_left();     // east cell's west edge
             const Real uu = u[i, j];
             const Real hf = (uu >= Real(0)) ? hR_west : hL_east;          // upwind donor edge
-            fx[i, j] = uu * hf * m.dy(Loc::XFace, i, j);                  // width-weighted transport
+            // × wet: no mass crosses a wet–dry (coast) face. ×1 (compiles away) all-wet.
+            fx[i, j] = uu * hf * m.dy(Loc::XFace, i, j) * m.wet(Loc::XFace, i, j);
         });
 
         // ── Pass 2: y-face mass flux. Interior faces j∈[1,ny-1]; walls j=0,ny → 0. ──
@@ -104,7 +105,7 @@ public:
             const Real hS_north = Scheme::reconstruct(north).at_left();   // north cell's south edge
             const Real vv = v[i, j];
             const Real hf = (vv >= Real(0)) ? hN_south : hS_north;
-            fy[i, j] = vv * hf * m.dx(Loc::YFace, i, j);
+            fy[i, j] = vv * hf * m.dx(Loc::YFace, i, j) * m.wet(Loc::YFace, i, j);
         });
 
         // ── Pass 3: divergence → tendency. k.eta += -(Δfx + Δfy)/area (accumulate). ──
