@@ -91,3 +91,26 @@ TEST_CASE("global_integral: one reduce, many integrands (mass, salt, energy-dens
     const tc::Real hmax = tc::global_max(m, [=](Index i, Index j) { return h[i, j]; });
     CHECK(hmax == doctest::Approx(1000.0 + (nx - 1)));
 }
+
+// The {x}-reduce (ADR-8): zonal_mean collapses x → a profile over y.
+TEST_CASE("zonal_mean: length-weighted mean over x gives a y-profile") {
+    using tc::Index; using tc::Real;
+    const Index nx = 12, ny = 6;
+    tc::CartesianMesh m(nx, ny, 100.0, 50.0);
+    tc::Arena a(4u << 20);
+    tc::BaroState s = tc::allocate_baro_state(a, m);
+    std::vector<Real> prof(ny);
+
+    // constant along x, varying with y ⇒ mean = the value itself
+    tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
+                      [=](Index i, Index j) { s.eta[i, j] = 10.0 + j; });
+    const tc::Field2 h = s.eta;
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx(10.0 + j));
+
+    // linear in x (f=i) ⇒ mean = (nx-1)/2 for every row (uniform dx)
+    tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
+                      [=](Index i, Index j) { s.eta[i, j] = Real(i); });
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx((nx - 1) / 2.0));
+}

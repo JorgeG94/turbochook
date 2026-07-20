@@ -19,6 +19,7 @@
 #include <execution>
 #include <numeric>
 #include <ranges>
+#include <algorithm>
 #include <functional>
 #include <limits>
 #include "core/types.hpp"
@@ -49,6 +50,27 @@ Real global_max(const M& mesh, Cell f) {
         std::numeric_limits<Real>::lowest(),
         [](Real a, Real b) { return a > b ? a : b; },
         [=](Index n) { const Index i = n % nx, j = n / nx; return f(i, j); });
+}
+
+// The {x}-reduce: length-weighted ZONAL MEAN → a PROFILE over y.
+//   out[j] = Σᵢ f(i,j)·dxₗ·wetₗ / Σᵢ dxₗ·wetₗ     (out has ≥ extent_y(L) entries)
+// Same integrand pattern as global_integral, one dimension less reduced ⇒ output rank
+// 1 instead of 0 (jet profile ū(y), MOC, …). Offloads as a SEGMENTED reduce: one
+// thread per row j, serial inner sum over i. `out` must be device-accessible when the
+// backend offloads (a managed buffer); on the host build any pointer works.
+template <Loc L = Loc::Center, Mesh M, class Cell>
+void zonal_mean(const M& mesh, Cell f, Real* out) {
+    const M m = mesh;
+    const Index nx = m.extent_x(L), ny = m.extent_y(L);
+    auto js = std::views::iota(Index{0}, ny);
+    std::for_each(par, js.begin(), js.end(), [=](Index j) {
+        Real num = 0, den = 0;
+        for (Index i = 0; i < nx; ++i) {
+            const Real w = m.dx(L, i, j) * m.wet(L, i, j);
+            num += f(i, j) * w; den += w;
+        }
+        out[j] = den > Real(0) ? num / den : Real(0);
+    });
 }
 
 } // namespace tc

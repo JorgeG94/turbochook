@@ -27,18 +27,19 @@ namespace tc {
 template <int NL, class Prec = double>
 class OceanOutput {
     nc::File    f_;
-    int         vtime_ = -1, vh_ = -1, vu_ = -1, vv_ = -1, vzeta_ = -1;
+    int         vtime_ = -1, vh_ = -1, vu_ = -1, vv_ = -1, vzeta_ = -1, vubar_ = -1;
     std::size_t rec_ = 0;
     Index       nx_ = 0, ny_ = 0;
     std::vector<Prec> buf_;          // (nx·ny) centre-grid scratch (interp + precision cast)
     std::vector<Real> corner_;       // (nx+1)·(ny+1) corner ζ scratch (a derived-field diagnostic)
+    std::vector<Prec> prof_;         // (ny) zonal-mean profile scratch (the {x}-reduce)
 
 public:
     template <Mesh M>
     OceanOutput(std::string_view path, const M& mesh,
                 std::string_view xunits = "m", std::string_view yunits = "m")
         : nx_(mesh.nx()), ny_(mesh.ny()), buf_(std::size_t(mesh.nx()) * mesh.ny()),
-          corner_(std::size_t(mesh.nx() + 1) * (mesh.ny() + 1)) {
+          corner_(std::size_t(mesh.nx() + 1) * (mesh.ny() + 1)), prof_(std::size_t(mesh.ny())) {
         f_ = nc::File::create(path);
         const int dt = f_.def_unlimited("time");             // C-order dims: time, layer, y, x
         const int dl = f_.def_dim("layer", NL);
@@ -61,6 +62,8 @@ public:
         f_.att(vv_,    "units", "m s-1"); f_.att(vv_,    "long_name", "northward velocity"); f_.att(vv_,    "coordinates", "x y");
         f_.att(vzeta_, "units", "s-1");   f_.att(vzeta_, "long_name", "relative vorticity"); f_.att(vzeta_, "coordinates", "x y");
         f_.att(vzeta_, "standard_name", "ocean_relative_vorticity");
+        vubar_ = f_.def_var<Prec>("ubar", {dt, dl, dy});    // {x}-reduce → a 1-D y-profile
+        f_.att(vubar_, "units", "m s-1"); f_.att(vubar_, "long_name", "zonal-mean eastward velocity"); f_.att(vubar_, "coordinates", "y");
         f_.global_att("Conventions", "CF-1.11");
         f_.global_att("source", "TurboChook");
         f_.global_att("title", "Layered shallow-water ocean state");
@@ -81,6 +84,7 @@ public:
         for (int l = 0; l < NL; ++l) {
             fill_center   (s.layer[l].eta);     put_layer(vh_,    l);
             fill_u_center (s.layer[l].u);       put_layer(vu_,    l);
+            fill_ubar     (mesh);               put_profile(vubar_, l);   // {x}-reduce of the centre-u in buf_
             fill_v_center (s.layer[l].v);       put_layer(vv_,    l);
             fill_vorticity(s.layer[l], mesh);   put_layer(vzeta_, l);
         }
@@ -93,6 +97,21 @@ private:
     void put_layer(int var, int l) {
         f_.template put<Prec>(var, {rec_, std::size_t(l), 0, 0},
                               {1, 1, std::size_t(ny_), std::size_t(nx_)}, buf_.data());
+    }
+    void put_profile(int var, int l) {                        // a (time,layer,y) 1-D slab
+        f_.template put<Prec>(var, {rec_, std::size_t(l), 0}, {1, 1, std::size_t(ny_)}, prof_.data());
+    }
+    // ū(y) = Σᵢ u_centre·dx·wet / Σᵢ dx·wet, computed from buf_ (already the centre u).
+    template <Mesh M>
+    void fill_ubar(const M& mesh) {
+        for (Index j = 0; j < ny_; ++j) {
+            Real num = 0, den = 0;
+            for (Index i = 0; i < nx_; ++i) {
+                const Real w = mesh.dx(Loc::Center, i, j) * mesh.wet(Loc::Center, i, j);
+                num += Real(buf_[std::size_t(i) + std::size_t(j) * nx_]) * w; den += w;
+            }
+            prof_[j] = Prec(den > Real(0) ? num / den : Real(0));
+        }
     }
     void fill_center(Field2 f)  { for (Index j=0;j<ny_;++j) for (Index i=0;i<nx_;++i) buf_[std::size_t(i)+std::size_t(j)*nx_] = Prec(f[i,j]); }
     void fill_u_center(Field2 u){ for (Index j=0;j<ny_;++j) for (Index i=0;i<nx_;++i) buf_[std::size_t(i)+std::size_t(j)*nx_] = Prec(Real(0.5)*(u[i,j]+u[i+1,j])); }
