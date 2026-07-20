@@ -87,6 +87,32 @@ inline int bt_n_inner(Real dt_outer, Real c_ext, Real dx, Real dy, Real cfl_safe
     return std::max(1, int(std::ceil(dt_outer / dt_safe)));
 }
 
+// ── Thickness-weighted depth-mean of a per-layer FACE field (rakali face_depth_mean)
+// out.u = Σₖ h_faceₖ·fld.uₖ / Σₖ h_faceₖ (h_face from `h`; fld supplies the u/v being
+// averaged). out.eta untouched. Forms the barotropic forcing from the slow tendencies.
+template <int NL, Mesh M>
+inline void depth_mean_faces(LayeredState<NL> fld, LayeredState<NL> h, BaroState out, const M& mesh) {
+    const M m = mesh;
+    const Field2 ou = out.u;
+    for_each_cell(m.extent_x(Loc::XFace), m.extent_y(Loc::XFace), [=](Index i, Index j) {
+        Real num = 0, den = 0;
+        for (int l = 0; l < NL; ++l) {
+            const Real hf = Real(0.5) * (bc_at(m, h.layer[l].eta, i - 1, j) + bc_at(m, h.layer[l].eta, i, j));
+            num += hf * fld.layer[l].u[i, j]; den += hf;
+        }
+        ou[i, j] = den > Real(0) ? num / den : Real(0);
+    });
+    const Field2 ov = out.v;
+    for_each_cell(m.extent_x(Loc::YFace), m.extent_y(Loc::YFace), [=](Index i, Index j) {
+        Real num = 0, den = 0;
+        for (int l = 0; l < NL; ++l) {
+            const Real hf = Real(0.5) * (bc_at(m, h.layer[l].eta, i, j - 1) + bc_at(m, h.layer[l].eta, i, j));
+            num += hf * fld.layer[l].v[i, j]; den += hf;
+        }
+        ov[i, j] = den > Real(0) ? num / den : Real(0);
+    });
+}
+
 // ── The split-explicit stepper (skeleton) ────────────────────────────────────────
 // Parameterised by NL layers and the barotropic sub-solver `Baro` (the FB substep +
 // the 2D operators over a BaroState). Owns arena-backed scratch: the live barotropic
