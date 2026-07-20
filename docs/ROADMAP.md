@@ -99,6 +99,15 @@ north star ("split-explicit") and what makes a 300-day integration a routine job
 **Acceptance:** split run reproduces the unsplit `bc_inst` statistics (eddy scale, growth,
 energy/mass) with `M`-fold fewer layered RHS evals and a measured `≥10×` speedup; GPU-stable.
 
+**Progress:** Stages 1–5 done (`BarotropicSolver` FB substep, `derive_bt_from_layers`,
+`depth_mean_faces`, `SplitTwoLayerCore`). Oracle passes — a two-layer barotropic wave
+through the split recovers `√(g(H₁+H₂))` at outer CFL≈2. `demo_baroclinic_split` rolls the
+`bc_inst` jet into spiral eddies at `dt=120s` (M=10), **20× fewer layered evals**, mass to
+0.01%. **Open:** the forward-Euler *outer* step amplifies the internal gravity wave and blows
+up ~day 30 (imaginary-axis instability, same failure mode as SSP-RK2). **Fix:** wrap the split
+stage in an **SSP-RK3 outer** (imaginary-axis-stable) — the remaining M3.5 work for stable
+long runs.
+
 ## M4 — EOS + FV pressure gradient + a vertical coordinate
 
 - Nonlinear EOS; FV-PGF; a `Vcoord` policy (sigma / z* / ALE remap).
