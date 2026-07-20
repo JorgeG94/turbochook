@@ -8,11 +8,20 @@ contributor (human or agent) needs so they don't re-derive them. Read this after
 
 ## Where we are
 
-**M2 (single-layer operators) and M3-stage-1 (two-layer core) are complete and
-validated — host-green and GPU-offload-verified.** The north star is a **two-layer
-baroclinic-instability** run (emulating `../two_layer_sw`); the physics engine for
-it now exists and every mode is validated. Remaining work is the *run*: a jet IC,
-light dissipation, and rendering.
+**The north star is reached: TurboChook reproduces two-layer baroclinic instability
+end-to-end on the GPU.** A geostrophic jet on a spherical band (59°N, periodic-x /
+wall-y) destabilises, meanders, breaks, and rolls up into spiral eddies (a 70-day,
+256² run, ~24 min of V100 wall time at ~20 s/sim-day, mass drift 0.1%). Everything
+below it is host-green + GPU-offload-verified:
+
+- **M2** single-layer operators (continuity/Coriolis/PGF) — validated on the plane
+  AND the sphere (mass conservation, lake-at-rest, geostrophic-balance residual
+  0.027%).
+- **M3-stage-1** two-layer core — coupling PGF exact, barotropic + baroclinic wave
+  speeds to 0.1%.
+- **Periodic-x** via mesh-owned indexing (ADR-7): shift_x/shift_y/bc_at, seam-crossing
+  validated.
+- **M3-stage-2** the `demo_baroclinic` run itself.
 
 ### What's built
 
@@ -68,18 +77,32 @@ tests/        test_*.cpp     43 doctest cases
 
 ---
 
-## Next steps (M3-stage-2 — the baroclinic-instability run)
+## What the run taught us (for the follow-ups)
 
-1. **`RunConfig` struct + presets** (code-first, no input-file format) mirroring the
-   Julia `bc_inst` case: domain, H₁/H₂, ρ, f₀/β, dt, output cadence.
-2. **Baroclinic-jet IC** — a geostrophically-balanced tilted interface + a
-   perturbation to seed the instability (port from `../two_layer_sw` / `../rakali_dc`).
-3. **Light dissipation** operator (Laplacian/Leith viscosity ± Shapiro filter) to
-   control the enstrophy cascade — a new module on its own axis.
-4. **Run + render** the eddy field → the video.
+- **Seed placement is decisive.** A whole-domain cos·cos interface checkerboard
+  mostly radiates far-field gravity waves and barely grows; a **front-localised
+  sech²(y/L) meander** projects onto the jet-trapped mode and grows (e-fold ~5 days).
+  `|v1|max` (base v≡0) is the clean growth diagnostic; `|v2|max` confirms coupling.
+- **The scheme under-grows the instability ~10×** vs inviscid theory, because
+  `Rd ≈ 21 km ≈ 4 cells` is only marginally resolved at 256² and PPM+Sadourny damp
+  it. So the **exact-Julia weak jet (L=100 km, U=0.15) decays** rather than rolls up;
+  a narrower/stronger jet (L≈40 km, U≈0.5–0.8) overcomes the damping. This is the
+  main open quality issue.
 
-Deferred (post-video, per the user): full tracer chain (PCM→WENO9) + advection-scheme
-study + FP32 mixed precision. See [`ROADMAP.md`](ROADMAP.md).
+## Next steps
+
+1. **Recover the exact-Julia jet.** Close the ~10× growth gap so `L=100 km, U=0.15`
+   goes unstable: (a) 512² to resolve `Rd`; (b) a **scale-selective closure**
+   (biharmonic / Leith) instead of uniform Shapiro, which diffuses the broad jet;
+   (c) a less-diffusive continuity option at the deformation scale.
+2. **Factor dissipation into a tested module** (`src/physics/dissipation.hpp`): the
+   Shapiro filter (currently inline in `demo_baroclinic`) + a Laplacian/Leith
+   viscosity, each on its own policy axis, with unit tests.
+3. **`RunConfig` struct + presets** (code-first) for the bc_inst / eq-wave cases.
+4. **Vorticity / PV rendering** (sharper eddy cores than the interface view).
+
+Deferred (per the user): full tracer chain (PCM→WENO9) + advection-scheme study +
+FP32 mixed precision. See [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
