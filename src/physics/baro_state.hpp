@@ -77,4 +77,19 @@ inline void zero_baro_state(BaroState k, const M& m) {
                   [=](Index i, Index j) { v[i, j] = Real(0); });
 }
 
+// dst = a·x + b·y over one field's OWN extent (no mesh needed — the Field carries
+// its extents). Elementwise, so aliasing (dst == x or y) is safe.
+inline void combine_field(Field2 dst, Real a, Field2 x, Real b, Field2 y) {
+    const Index nx = dst.extent(0), ny = dst.extent(1);
+    for_each_cell(nx, ny, [=](Index i, Index j) { dst[i, j] = a * x[i, j] + b * y[i, j]; });
+}
+
+// The RK combine over a whole staggered state: dst = a·x + b·y per field. The one
+// primitive the integrator needs (predictor, stage add, final average).
+inline void axpby(BaroState dst, Real a, BaroState x, Real b, BaroState y) {
+    combine_field(dst.eta, a, x.eta, b, y.eta);
+    combine_field(dst.u,   a, x.u,   b, y.u);
+    combine_field(dst.v,   a, x.v,   b, y.v);
+}
+
 } // namespace tc

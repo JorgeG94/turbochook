@@ -52,15 +52,21 @@ struct SSPRK2 {
     // the innermost kernel lambdas must not.
     template <class RhsOp, class BcOp>
     static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
-        // TODO(M2): Heun, low-storage with k=scratch[0] (tendency), s1=scratch[1]
-        // (predictor):
-        //   bc(s);   rhs(s, k);                 // k = f(s)
-        //   axpy(s1, s, p.dt, k);               // s1 = s + dt·k        (predictor)
-        //   axpy(s,  s, 0.5*p.dt, k);           // s += dt/2·k
-        //   bc(s1);  rhs(s1, k);                // k = f(s1)
-        //   axpy(s,  s, 0.5*p.dt, k);           // s += dt/2·k → s + dt/2·(k1+k2)
-        // `axpy` is a small per-field combine over each staggered extent.
-        (void)s; (void)scratch; (void)rhs; (void)bc; (void)p;
+        // Heun / SSP-RK2 in Shu–Osher low-storage form (2 registers): predictor s1,
+        // tendency k. `s` stays the un-touched s^n until the final average, so no
+        // separate save register is needed.
+        //   s1 = s + dt·L(s)                              (stage-1 predictor)
+        //   s1 = s1 + dt·L(s1)                            (stage-2, reuse k)
+        //   s  = ½·s + ½·s1                               (= s^{n+1})
+        BaroState k  = scratch[0];
+        BaroState s1 = scratch[1];
+        const Real dt = p.dt;
+
+        bc(s);   rhs(s, k);                       // k = L(s^n)
+        axpby(s1, Real(1), s, dt, k);            // s1 = s^n + dt·L(s^n)   (= s^{(1)})
+        bc(s1);  rhs(s1, k);                      // k = L(s^{(1)})
+        axpby(s1, Real(1), s1, dt, k);           // s1 = s^{(1)} + dt·L(s^{(1)})
+        axpby(s, Real(0.5), s, Real(0.5), s1);   // s  = ½·s^n + ½·s1  = s^{n+1}
     }
 };
 
@@ -70,8 +76,9 @@ struct ForwardEuler {
     static constexpr int n_scratch = 1;
     template <class RhsOp, class BcOp>
     static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
-        // TODO: bc(s); rhs(s, scratch[0]); axpy(s, s, p.dt, scratch[0]);
-        (void)s; (void)scratch; (void)rhs; (void)bc; (void)p;
+        BaroState k = scratch[0];
+        bc(s); rhs(s, k);                        // k = L(s^n)
+        axpby(s, Real(1), s, p.dt, k);           // s^{n+1} = s^n + dt·L(s^n)
     }
 };
 
