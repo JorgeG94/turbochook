@@ -1,5 +1,7 @@
 # TurboChook 🐔⚡
 
+_It's like a normal chook, just very fast_ (Our tour guide through the Coal River Valley when asked about TurboChooks)
+
 A from-scratch, **GPU-native C++23 ocean dynamical core**, built on **ISO C++ standard
 parallelism** (`std::execution::par_unseq` + `nvc++ -stdpar=gpu`). I am only doing this 
 to refresh my knowledge of C++ and do some stupid things. THe code is very heavily 
