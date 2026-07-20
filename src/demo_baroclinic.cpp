@@ -26,6 +26,9 @@
 #include "mesh/spherical_mesh.hpp"
 #include "physics/layered_state.hpp"
 #include "diag/report.hpp"
+#ifdef TC_HAVE_NETCDF
+#include "io/ocean_output.hpp"
+#endif
 #include "physics/multilayer_core.hpp"
 
 using tc::Real;
@@ -142,6 +145,9 @@ int main(int argc, char** argv) {
     const Real vis = 1.2 * Dxi;                                     // colour range on ξ
 
     tc::Reporter rep;
+#ifdef TC_HAVE_NETCDF
+    tc::OceanOutput<2, float> ncout(outdir + "/state.nc", mesh, "degrees_east", "degrees_north");
+#endif
     int frame = 0;
     for (int n = 0; n <= nsteps; ++n) {
         if (n % every == 0) {
@@ -163,8 +169,12 @@ int main(int argc, char** argv) {
             }
             ++frame;
         }
-        if (n % (every * 10) == 0)
+        if (n % (every * 10) == 0) {
             rep.report(core.state(), mesh, Real(n) * dt / 86400.0, dt, long(n), days);
+#ifdef TC_HAVE_NETCDF
+            ncout.write(core.state(), Real(n) * dt);
+#endif
+        }
         core.step();
         shapiro_center(h1, tmp, mesh, eps_shapiro);
         shapiro_center(h2, tmp, mesh, eps_shapiro);
