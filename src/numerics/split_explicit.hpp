@@ -87,6 +87,41 @@ inline int bt_n_inner(Real dt_outer, Real c_ext, Real dx, Real dy, Real cfl_safe
     return std::max(1, int(std::ceil(dt_outer / dt_safe)));
 }
 
+// ── Outer time-integration schemes over the split STAGE Φ (SSP, Shu–Osher form) ──
+// Φ (a nullary callable) advances the state in place by one dt — the whole split
+// stage (FE slow momentum + FB barotropic subcycle + couple-back). These wrap it in
+// an SSP state-combination so the SLOW modes inherit the scheme's stability; `s`
+// aliases the live state, `s0` is the saved-sⁿ scratch. On the internal-gravity-wave
+// (imaginary) axis: FwdEuler is UNCONDITIONALLY unstable (grows as (ωΔt)²); SSP-RK2
+// (Heun, rakali's outer) grows only as (ωΔt)⁴ — fine WITH real viscosity; SSP-RK3 is
+// bounded for |ωΔt|<1.73 — stable without leaning on dissipation. A compile-time
+// policy (Integrator-axis, ADR-9): swap the outer scheme with one template arg.
+struct OuterFwdEuler {                                   // 1 stage — demonstrates the blow-up
+    static constexpr int stages = 1;
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
+        (void)s; (void)s0; stage();
+    }
+};
+struct OuterSSPRK2 {                                     // Heun — matches rakali
+    static constexpr int stages = 2;
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
+        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
+        stage();                                          // u1 = Φ(sⁿ)
+        stage();                                          // Φ(u1)
+        axpby(s, Real(0.5), s0, Real(0.5), s);            // sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
+    }
+};
+struct OuterSSPRK3 {                                     // imaginary-axis-stable to |ωΔt|<1.73
+    static constexpr int stages = 3;
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
+        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
+        stage(); stage();                                 // Φ(u1)
+        axpby(s, Real(0.75), s0, Real(0.25), s);          // u2 = ¾sⁿ + ¼Φ(u1)
+        stage();                                          // Φ(u2)
+        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);        // sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
+    }
+};
+
 // ── Thickness-weighted depth-mean of a per-layer FACE field (rakali face_depth_mean)
 // out.u = Σₖ h_faceₖ·fld.uₖ / Σₖ h_faceₖ (h_face from `h`; fld supplies the u/v being
 // averaged). out.eta untouched. Forms the barotropic forcing from the slow tendencies.

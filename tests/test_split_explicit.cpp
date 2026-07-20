@@ -99,3 +99,35 @@ TEST_CASE("split two-layer: barotropic gravity wave at sqrt(g(H1+H2)) with big o
     REQUIRE(t_cross > 0);
     CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.05));   // subcycle recovers √(g(H1+H2))
 }
+
+TEST_CASE("split two-layer: outer scheme is a swappable policy (RK2 also recovers √(gH))") {
+    const Index nx = 64, ny = 4;
+    const Real dx = 10000.0, g = 9.81, H1 = 200.0, H2 = 800.0, A = 0.5, H = H1 + H2;
+    const Real PI = std::acos(Real(-1));
+    tc::CartesianMesh mesh(nx, ny, dx, dx, /*f0*/0.0);
+    const Real c = std::sqrt(g * H), L = Real(nx) * dx, kx = PI / L, T = Real(2) * PI / (kx * c);
+    const Real dt = 200.0;
+    tc::Arena arena(64u << 20);
+    tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dx, .dt = dt, .g = g, .H = H,
+                  .H1 = H1, .H2 = H2, .rho1 = 1025, .rho2 = 1025 };
+    // same stack, RK2 outer instead of the default RK3
+    tc::SplitTwoLayerCore<tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                          tc::TwoLayerReducedGravityPgf, tc::WallBC, 20, tc::OuterSSPRK2> core(mesh, arena, p);
+    core.init();
+    const tc::Field2 e0 = core.state().layer[0].eta, e1 = core.state().layer[1].eta;
+    tc::for_each_cell(mesh.extent_x(tc::Loc::Center), mesh.extent_y(tc::Loc::Center), [=](Index i, Index j) {
+        const Real s = A * std::cos(kx * mesh.x(tc::Loc::Center, i, j));
+        e0[i, j] = H1 + (H1 / H) * s; e1[i, j] = H2 + (H2 / H) * s; });
+    const Index aj = ny / 2;
+    auto surf = [&]() { return core.state().layer[0].eta[0, aj] + core.state().layer[1].eta[0, aj] - H; };
+    Real t_prev = 0, e_prev = surf(), t_cross = -1;
+    for (int n = 1; n <= 400; ++n) {
+        core.step();
+        const Real t = Real(n) * dt, e = surf();
+        REQUIRE(std::isfinite(e));
+        if (e < 0 && e_prev >= 0) { t_cross = t_prev + (t - t_prev) * e_prev / (e_prev - e); break; }
+        t_prev = t; e_prev = e;
+    }
+    REQUIRE(t_cross > 0);
+    CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.05));
+}

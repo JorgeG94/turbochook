@@ -35,7 +35,7 @@
 namespace tc {
 
 template <Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf2L,
-          BoundaryCondition Bc, int M = 30>
+          BoundaryCondition Bc, int M = 30, class Outer = OuterSSPRK3>
 class SplitTwoLayerCore {
     static constexpr int NL = 2;
     Msh    mesh_;
@@ -50,6 +50,7 @@ class SplitTwoLayerCore {
     BarotropicSolver<Cont, Cor, FvPgf> bt_solver_{};
 
     LayeredState<NL> state_{};
+    LayeredState<NL> s0_{};                         // saved s^n for the SSP-RK3 outer
     LayeredState<NL> kcor_{}, kpgf_{}, kh_{};       // slow-tendency / thickness scratch
     BaroState bt_{}, bt_mean_{}, bt_end_{}, ubt_n_{}, f_fast_{}, f_full_{}, dm_pgf_{};
 
@@ -70,6 +71,7 @@ public:
 
     void init() {
         state_ = allocate_layered_state<NL>(arena_, mesh_);
+        s0_   = allocate_layered_state<NL>(arena_, mesh_);
         kcor_ = allocate_layered_state<NL>(arena_, mesh_);
         kpgf_ = allocate_layered_state<NL>(arena_, mesh_);
         kh_   = allocate_layered_state<NL>(arena_, mesh_);
@@ -83,7 +85,20 @@ public:
     const Msh& mesh() const { return mesh_; }
     int n_inner() const { return M_; }
 
+    // Outer time step: the `Outer` SSP policy (default SSP-RK3) wraps the split STAGE
+    // Φ. Φ acts as one forward step of the slow coupled system (FE slow momentum + FB
+    // barotropic subcycle + couple-back), so the outer scheme sets the SLOW modes'
+    // stability — the internal gravity wave in particular. FwdEuler is unconditionally
+    // unstable on it; SSP-RK2 (rakali) grows as (ωΔt)⁴ and wants some viscosity; SSP-RK3
+    // is bounded for |ωΔt|<1.73. The barotropic subcycle re-runs once per stage (as in
+    // the rakali RK driver); a convex SSP combination of mass-consistent states (each
+    // Φ closes Σₖhₖ=η_end) stays mass-consistent.
     void step() {
+        Outer::advance(state_, s0_, [this] { this->split_stage(); });
+    }
+
+    // One split STAGE Φ: advances state_ by p_.dt via the rakali run_stage_split flow.
+    void split_stage() {
         const Msh  m  = mesh_;
         const Real dt = p_.dt, dtbt = dt / Real(M_);
 
