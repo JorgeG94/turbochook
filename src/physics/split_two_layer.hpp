@@ -67,7 +67,10 @@ class SplitTwoLayerCore {
     }
 
 public:
-    SplitTwoLayerCore(Msh mesh, Arena& a, Params p) : mesh_(mesh), arena_(a), p_(p) {}
+    // m_inner overrides the barotropic substep count at RUNTIME (default = template M);
+    // nothing is sized by it, so sweeping dt/M needs no recompile.
+    SplitTwoLayerCore(Msh mesh, Arena& a, Params p, int m_inner = M)
+        : mesh_(mesh), arena_(a), p_(p), M_(m_inner) {}
 
     void init() {
         state_ = allocate_layered_state<NL>(arena_, mesh_);

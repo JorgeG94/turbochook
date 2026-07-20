@@ -94,9 +94,10 @@ int main(int argc, char** argv) {
     tc::Arena arena(std::size_t(N) * N * 3 * 8 * 24 + (64u << 20));
     tc::Params p{ .nx = N, .ny = N, .dx = dxmin, .dy = mesh.dy(Loc::Center, 0, 0), .dt = dt,
                   .g = g, .H = H1 + H2, .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
-    constexpr int Msub = 24;   // 512^2 needs more FB substeps (finer dx -> smaller barotropic CFL)
+    constexpr int Msub = 24;                                  // template default (compile-time)
+    const int Msub_cli = argc > 9 ? std::atoi(argv[9]) : Msub; // arg9: runtime barotropic substeps
     tc::SplitTwoLayerCore<tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
-                          tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p);
+                          tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p, Msub_cli);
     core.init();
     tc::Field2 tmp = arena.alloc2d(N, N);                            // Shapiro scratch
 
