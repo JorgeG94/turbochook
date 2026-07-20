@@ -381,10 +381,20 @@ locals, capture `[=]`, never `this`" is the device-boundary rule; the composed
    concept is over `(Workspace&, RhsOp, BcOp, Params)` and knows **nothing** of physics/flux
    — it only calls the RHS op + `combine`s. Hand-code the SSP stages (not a Butcher engine).
    Declares `static constexpr int n_scratch` so the Workspace sizes its register set.
-3. **Ghosts — halo rows inside each field.** `nghost` is a **property of the reconstruction/
-   scheme** (`Scheme::nghost`; =1 for the barotropic stencil, wider for PPM/higher-order). A `BC` kernel fills them
-   **before each RK stage's `rhs`** → the interior kernel is **branch-free** (no boundary
-   `if`). 0-based; interior = `[nghost, nghost+n)`.
+3. **Ghosts — halo rows inside each field (the TARGET, not yet built).** `nghost` is a
+   **property of the reconstruction/scheme** (`Scheme::nghost`; =1 for the barotropic
+   stencil, wider for PPM/higher-order). A `BC` kernel fills them **before each RK stage's
+   `rhs`** → the interior kernel is **branch-free** (no boundary `if`), and periodic/tripolar
+   topology falls out of the halo fill (ADR-7). 0-based; interior = `[nghost, nghost+n)`.
+   **Status (be honest — adversarial review):** this is NOT built. M2 uses an interim
+   *no-ghost, iterate-the-interior* strategy — `for_each_x/y_face` walks interior faces
+   `[1, n-1]` (`iterate.hpp`) and leaves domain-edge faces to the BC; fields carry no halo
+   padding (`allocate_baro_state`), and diagnostics iterate the full extent (= interior only
+   while `nghost=0`). Migrating to real ghosts is a **pervasive reindex** (allocation +
+   every `for_each` + `FaceView` connectivity + diagnostics), **not a drop-in** — it lands
+   *with* the BC/halo feature (its first real consumer), where an interior-iteration seam
+   (a mesh-owned interior range) localizes the change. Until then, the interim only handles
+   closed walls correctly.
 4. **Workspace owns registers.** A `Workspace` allocates `U + n_scratch` registers from the
    Arena; `System<N>` is one register. Ping-pong lives inside `Integrator::advance`; the flux
    only ever sees a `SystemView`.

@@ -32,6 +32,9 @@ template <Mesh M>
 Real total_mass(const BaroState& s, const M& mesh) {
     const Field2 eta = s.eta;                          // hoist view → capture by value
     const M      m   = mesh;                           // small POD mesh, by value (never `this`)
+    // NOTE (DESIGN #3): iterates the full extent, which equals the interior only while
+    // nghost=0 (no halo yet). When ghosts land, this MUST iterate the interior range or it
+    // silently sums halo cells — one of the pervasive-reindex sites, not a drop-in.
     const Index  nx  = m.extent_x(Loc::Center);
     const Index  ny  = m.extent_y(Loc::Center);
     auto ids = std::views::iota(Index{0}, nx * ny);

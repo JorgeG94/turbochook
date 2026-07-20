@@ -25,7 +25,7 @@ turbochook/
 │   │   ├── arena.hpp             # the memory arena (DESIGN ADR-3)
 │   │   ├── profiler.hpp          # nested-region wall-clock timing (self vs inclusive)
 │   │   └── (later)               # assert.hpp, mpi.hpp, gpu.hpp — assertions, MPI, CUDA/HIP wrappers
-│   ├── mesh/                     # grid extents, metrics, ghost/halo (0-based; interior = [nghost, nghost+n))
+│   ├── mesh/                     # grid extents, metrics; ghost/halo is the TARGET (interior = [nghost, nghost+n)) — M2 is no-ghost interim, see DESIGN #3
 │   ├── physics/                  # ocean operator policies (continuity.hpp, coriolis.hpp, pgf.hpp; eos.hpp @ M4)
 │   ├── numerics/                 # parallel.hpp (for_each_cell / for_each_face), integrator.hpp
 │   ├── bc/                       # boundary-condition policies
