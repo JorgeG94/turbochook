@@ -33,7 +33,8 @@ int main(int argc, char** argv) {
     const std::string outdir = argc > 1 ? argv[1] : "tmp/frames";
     const tc::Index nx = argc > 2 ? tc::Index(std::atoi(argv[2])) : 160, ny = nx;
     const tc::Real dx = 15000.0, dy = 15000.0;          // 15 km cells
-    const tc::Real g = 9.81, H = 1000.0, f0 = 1.0e-4;
+    const tc::Real g = 9.81, H = 1000.0;
+    const tc::Real f0 = argc > 5 ? tc::Real(std::atof(argv[5])) : 1.0e-4;   // arg5: Coriolis f
     const tc::Real A = 1.0, Lbump = 180000.0;
 
     tc::Arena arena(160u << 20);
