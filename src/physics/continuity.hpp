@@ -17,14 +17,25 @@
 // only for now.
 // =============================================================================
 
+#include <array>
 #include <concepts>
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "physics/baro_state.hpp"
 #include "physics/reconstruction.hpp"
+#include "numerics/parallel.hpp"
 
 namespace tc {
+
+// Clamp-to-edge centre access — repeats the boundary value when a reconstruction
+// window overhangs the domain. The no-ghost interim's boundary reconstruction
+// (DESIGN #3); a real halo fill supersedes it. Metric-free (indices only).
+inline Real clamp_at(Field2 h, Index i, Index j, Index nx, Index ny) {
+    i = i < 0 ? 0 : (i >= nx ? nx - 1 : i);
+    j = j < 0 ? 0 : (j >= ny ? ny - 1 : j);
+    return h[i, j];
+}
 
 // The per-module concept: init your workspace from the Arena, then compute the
 // tendency into `k` using state `s`. (`ContinuityModule`, `CoriolisModule`, and
@@ -58,14 +69,58 @@ public:
     // then the kernel lambda captures [=] — NEVER `this` (capturing `this` passes
     // on host but hard-crashes on GPU with cudaErrorIllegalAddress — verified on
     // nvc++ 26.5 / V100). The math is the TODO; the discipline is the point.
+    // ∂h/∂t = -∇·(h u). Three synchronised passes (stdpar has no async):
+    //   1. reconstruct h to each face (Scheme, generic over its radius), pick the
+    //      UPWIND cell's edge, form the width-weighted transport flux;
+    //   2. (y-faces, same);
+    //   3. per cell, divergence of its 4 face fluxes / area → accumulate into k.eta.
+    // Mass is conserved to machine-eps by the flux-form telescoping (single-valued
+    // face flux + zero wall flux + area·iarea≡1), independent of the scheme.
+    // `h == s.eta` is the (total) layer thickness. (rki_continuity.F90.)
     template <Mesh M> void compute(BaroState s, BaroState k, const M& mesh, Params p) const {
-        Field2 fx = mass_flux_x_, fy = mass_flux_y_;   // ← hoist, capture these by value
-        // TODO(M2): implement the PPM swept thickness flux (the per-cell-gather
-        // FaceView flux-divergence lands here — its first consumer). Sketch:
-        //     for_each_face_x: fx[i,j] = Scheme::reconstruct(...)-based swept flux
-        //     for_each_face_y: fy[i,j] = ...
-        //     for_each_cell  : k.eta[i,j] -= (Σ flux·edge_len)/area   (mesh metrics)
-        (void)s; (void)k; (void)mesh; (void)p; (void)fx; (void)fy;
+        const M      m  = mesh;                        // POD copy, capture by value
+        const Field2 h  = s.eta, u = s.u, v = s.v;
+        const Field2 fx = mass_flux_x_, fy = mass_flux_y_;
+        const Field2 ke = k.eta;
+        const Index  nx = m.nx(), ny = m.ny();
+        constexpr int R = Scheme::radius;
+        (void)p;
+
+        // ── Pass 1: x-face mass flux. Interior faces i∈[1,nx-1]; walls i=0,nx → 0. ──
+        for_each_cell(nx + 1, ny, [=](Index i, Index j) {
+            if (i == 0 || i == nx) { fx[i, j] = Real(0); return; }        // wall = no flux
+            std::array<Real, 2 * R + 1> west{}, east{};                   // cells i-1, i
+            for (int s2 = -R; s2 <= R; ++s2) {
+                west[s2 + R] = clamp_at(h, (i - 1) + s2, j, nx, ny);
+                east[s2 + R] = clamp_at(h,  i      + s2, j, nx, ny);
+            }
+            const Real hR_west = Scheme::reconstruct(west).at_right();    // west cell's east edge
+            const Real hL_east = Scheme::reconstruct(east).at_left();     // east cell's west edge
+            const Real uu = u[i, j];
+            const Real hf = (uu >= Real(0)) ? hR_west : hL_east;          // upwind donor edge
+            fx[i, j] = uu * hf * m.dy(Loc::XFace, i, j);                  // width-weighted transport
+        });
+
+        // ── Pass 2: y-face mass flux. Interior faces j∈[1,ny-1]; walls j=0,ny → 0. ──
+        for_each_cell(nx, ny + 1, [=](Index i, Index j) {
+            if (j == 0 || j == ny) { fy[i, j] = Real(0); return; }
+            std::array<Real, 2 * R + 1> south{}, north{};                 // cells j-1, j
+            for (int s2 = -R; s2 <= R; ++s2) {
+                south[s2 + R] = clamp_at(h, i, (j - 1) + s2, nx, ny);
+                north[s2 + R] = clamp_at(h, i,  j      + s2, nx, ny);
+            }
+            const Real hN_south = Scheme::reconstruct(south).at_right();  // south cell's north edge
+            const Real hS_north = Scheme::reconstruct(north).at_left();   // north cell's south edge
+            const Real vv = v[i, j];
+            const Real hf = (vv >= Real(0)) ? hN_south : hS_north;
+            fy[i, j] = vv * hf * m.dx(Loc::YFace, i, j);
+        });
+
+        // ── Pass 3: divergence → tendency. k.eta += -(Δfx + Δfy)/area (accumulate). ──
+        for_each_cell(nx, ny, [=](Index i, Index j) {
+            const Real div = (fx[i + 1, j] - fx[i, j]) + (fy[i, j + 1] - fy[i, j]);
+            ke[i, j] += -div / m.area(Loc::Center, i, j);                 // ∂h/∂t = -∇·(hu)
+        });
     }
 };
 

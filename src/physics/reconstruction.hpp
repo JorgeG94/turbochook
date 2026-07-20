@@ -104,6 +104,21 @@ concept FaceReconstruction = requires(std::array<Real, 2 * Scheme::radius + 1> w
 template <class Scheme>
 concept Reconstructor = WallReconstruction<Scheme> || FaceReconstruction<Scheme>;
 
+// van-Leer / monotonized-central limited slope over (a,b,c) centred on b:
+// sign(Δc)·min(|Δc|, 2|Δl|, 2|Δr|), zero at a local extremum. (rki_continuity.F90
+// `ppm_limited_slope`.) Shared by the wall family.
+constexpr Real vanleer_slope(Real a, Real b, Real c) {
+    const Real dl = b - a, dr = c - b;
+    if (dl * dr <= Real(0)) return Real(0);              // extremum → flatten
+    const Real dc  = Real(0.5) * (dl + dr);
+    const Real adl = dl < Real(0) ? -dl : dl;
+    const Real adr = dr < Real(0) ? -dr : dr;
+    Real mag = dc < Real(0) ? -dc : dc;                  // |Δc|
+    if (Real(2) * adl < mag) mag = Real(2) * adl;
+    if (Real(2) * adr < mag) mag = Real(2) * adr;
+    return dc < Real(0) ? -mag : mag;                    // sign(mag, Δc)
+}
+
 // ── The wall family (PCM/PLM real; PPM/PQM correctly-shaped seams) ───────────────
 
 struct Pcm {                                   // piecewise constant, 1st order
@@ -135,14 +150,28 @@ struct Ppm {                                   // piecewise parabolic, 3rd order
     static constexpr ReconKind kind   = ReconKind::Wall;
     static constexpr int       radius = 2;
     static constexpr int       order  = 2;
-    // TODO(M2): the real body — 4-point edge interpolation
-    //   a_{i+1/2} = (7(a_i+a_{i+1}) − (a_{i-1}+a_{i+2}))/12, then the
-    //   Colella–Woodward monotonicity limiter + a positivity limiter → (aL,aR,a6),
-    //   which map to monomial coeffs {aL, (aR−aL)+a6, −a6}. Shape is settled; the
-    //   coefficient body + its lake-at-rest / mass-conservation tests are the M2
-    //   work. Until then, PCM-fallback so the concept stays satisfied.
+    // The real PPM body (translated from rki_continuity.F90): van-Leer edge slopes,
+    // Colella–Woodward edge values (CW84 eq 1.6), then the CW monotonicity limiter
+    // (eq 1.10). Returns a parabola whose cell mean is exactly `hc` (mass-preserving).
+    // Window w = {h[i-2..i+2]}, cell at w[2]. (Positivity limiter is a later opt-in.)
     static constexpr Poly<2> reconstruct(std::array<Real, 5> w) {
-        return {{w[2], Real(0), Real(0)}};
+        const Real hc    = w[2];
+        const Real dh_m1 = vanleer_slope(w[0], w[1], w[2]);
+        const Real dh_0  = vanleer_slope(w[1], w[2], w[3]);
+        const Real dh_p1 = vanleer_slope(w[2], w[3], w[4]);
+        Real hL = Real(0.5) * (w[1] + hc) - (dh_0  - dh_m1) / Real(6);   // west edge
+        Real hR = Real(0.5) * (hc + w[3]) - (dh_p1 - dh_0 ) / Real(6);   // east edge
+
+        // CW84 monotonicity limiter (uses the pre-limit edges).
+        const Real dlr = hR - hL;
+        const Real h6  = Real(6) * (hc - Real(0.5) * (hL + hR));
+        if ((hR - hc) * (hc - hL) <= Real(0)) { hL = hc; hR = hc; }      // extremum → flat
+        else if (dlr * h6 >  dlr * dlr) hL = Real(3) * hc - Real(2) * hR;  // left overshoot
+        else if (dlr * h6 < -dlr * dlr) hR = Real(3) * hc - Real(2) * hL;  // right overshoot
+
+        // Parabola from (hc, hL, hR); mean over ξ∈[0,1] is hc by construction.
+        const Real a6 = Real(6) * (hc - Real(0.5) * (hL + hR));
+        return {{ hL, (hR - hL) + a6, -a6 }};
     }
 };
 
