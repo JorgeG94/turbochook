@@ -105,7 +105,10 @@ public:
 // The concrete PoC instantiation for M2. This one line names the whole scheme:
 // PPM continuity + Sadourny-enstrophy Coriolis + FV pressure gradient + wall BCs
 // + SSP-RK2. Swapping any policy is swapping one type here.
+// SSP-RK3, not RK2: the free-surface gravity wave is a non-dissipative oscillation
+// (imaginary eigenvalues) that RK2/Heun amplifies at the grid scale → blow-up. RK3's
+// stability region reaches the imaginary axis. (One-line Integrator-policy swap.)
 using BarotropicPoC =
-    OceanCore<CartesianMesh, PpmContinuity, SadournyEnstrophy, FvPgf, WallBC, SSPRK2>;
+    OceanCore<CartesianMesh, PpmContinuity, SadournyEnstrophy, FvPgf, WallBC, SSPRK3>;
 
 } // namespace tc

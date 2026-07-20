@@ -82,6 +82,30 @@ struct ForwardEuler {
     }
 };
 
-static_assert(Integrator<SSPRK2> && Integrator<ForwardEuler>);
+// Strong-Stability-Preserving RK3 (Shu–Osher). Unlike RK2/Heun, its stability
+// region INCLUDES part of the imaginary axis (|ωΔt| ≲ 1.73), so it integrates
+// non-dissipative gravity waves stably — RK2 amplifies every oscillatory mode
+// (√(1+(ωΔt)⁴/4) > 1) and the 2Δx grid mode blows up. Same 2 registers as RK2.
+struct SSPRK3 {
+    static constexpr int n_scratch = 2;
+    template <class RhsOp, class BcOp>
+    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
+        BaroState s0 = scratch[0];       // saved s^n (needed at every stage combine)
+        BaroState k  = scratch[1];       // tendency
+        const Real dt = p.dt;
+
+        axpby(s0, Real(1), s, Real(0), s);                       // s0 = s^n
+        bc(s); rhs(s, k);                                        // stage 1
+        axpby(s, Real(1), s, dt, k);                             //   s = s^n + dt·L(s^n)   (u1)
+        bc(s); rhs(s, k);                                        // stage 2
+        axpby(s, Real(0.25), s, Real(0.25) * dt, k);            //   s = ¼u1 + ¼dt·L(u1)
+        axpby(s, Real(0.75), s0, Real(1), s);                   //   s = ¾s^n + …           (u2)
+        bc(s); rhs(s, k);                                        // stage 3
+        axpby(s, Real(2) / 3, s, (Real(2) / 3) * dt, k);        //   s = ⅔u2 + ⅔dt·L(u2)
+        axpby(s, Real(1) / 3, s0, Real(1), s);                  //   s = ⅓s^n + …           (u^{n+1})
+    }
+};
+
+static_assert(Integrator<SSPRK2> && Integrator<ForwardEuler> && Integrator<SSPRK3>);
 
 } // namespace tc

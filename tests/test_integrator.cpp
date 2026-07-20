@@ -78,6 +78,27 @@ TEST_CASE("ForwardEuler reproduces the exact Euler step for linear decay") {
             CHECK(e[i, j] == doctest::Approx(expect));
 }
 
+TEST_CASE("SSPRK3 reproduces the exact 3rd-order step for linear decay") {
+    tc::CartesianMesh m(4, 4, 1.0, 1.0);
+    tc::Arena arena(1u << 20);
+    tc::BaroState s = tc::allocate_baro_state(arena, m);
+    std::array<tc::BaroState, tc::SSPRK3::n_scratch> scratch{
+        tc::allocate_baro_state(arena, m), tc::allocate_baro_state(arena, m)};
+
+    const tc::Real eta0 = 5.0, lambda = 0.3, dt = 0.1;
+    eta_uniform(arena, m, s, eta0);
+
+    tc::Params p{ .nx = 4, .ny = 4, .dx = 1, .dy = 1, .dt = dt, .g = 9.81, .H = 1000 };
+    tc::SSPRK3::advance(s, std::span<tc::BaroState>(scratch), decay_rhs(lambda), noop_bc, p);
+
+    const tc::Real x = lambda * dt;                              // 3rd-order Taylor of e^{-x}
+    const tc::Real expect = eta0 * (tc::Real(1) - x + x * x / 2 - x * x * x / 6);
+    const tc::Field2 e = s.eta;
+    for (tc::Index j = 0; j < m.ny(); ++j)
+        for (tc::Index i = 0; i < m.nx(); ++i)
+            CHECK(e[i, j] == doctest::Approx(expect));
+}
+
 TEST_CASE("SSPRK2 integrates a constant tendency exactly (linear in t)") {
     tc::CartesianMesh m(4, 4, 1.0, 1.0);
     tc::Arena arena(1u << 20);

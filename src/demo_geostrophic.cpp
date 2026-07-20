@@ -12,6 +12,7 @@
 // =============================================================================
 
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -34,8 +35,8 @@ void colormap(tc::Real v, unsigned char& r, unsigned char& g, unsigned char& b) 
 int main(int argc, char** argv) {
     const std::string outdir = argc > 1 ? argv[1] : "tmp/frames";
 
-    const tc::Index nx = 140, ny = 140;
-    const tc::Real dx = 18000.0, dy = 18000.0;          // 18 km → ~2520 km box
+    const tc::Index nx = argc > 2 ? tc::Index(std::atoi(argv[2])) : 140, ny = nx;   // arg2: grid
+    const tc::Real dx = 18000.0, dy = 18000.0;          // 18 km cells
     const tc::Real g = 9.81, H = 1000.0, f0 = 1.0e-4;   // f-plane, Rd = √(gH)/f ≈ 990 km
     const tc::Real A = 1.0, Lbump = 260000.0;           // 1 m bump, 260 km wide
 
@@ -85,6 +86,27 @@ int main(int argc, char** argv) {
                 std::fclose(fp);
             }
             ++frame;
+        }
+        // conservation diagnostics — the real correctness check behind the picture
+        if (n % (every * 10) == 0) {
+            const tc::Field2 e = core.state().eta, uf = core.state().u, vf = core.state().v;
+            tc::Real mass = 0, pe = 0, ke = 0, amax = 0, umax = 0;
+            for (tc::Index j = 0; j < ny; ++j)
+                for (tc::Index i = 0; i < nx; ++i) {
+                    const tc::Real ar = mesh.area(tc::Loc::Center, i, j);
+                    const tc::Real an = e[i, j] - H;
+                    mass += e[i, j] * ar;
+                    pe   += tc::Real(0.5) * g * an * an * ar;
+                    if (std::abs(an) > amax) amax = std::abs(an);
+                    const tc::Real uc = tc::Real(0.5) * (uf[i, j] + uf[i + 1, j]);
+                    const tc::Real vc = tc::Real(0.5) * (vf[i, j] + vf[i, j + 1]);
+                    ke += tc::Real(0.5) * H * (uc * uc + vc * vc) * ar;
+                    const tc::Real sp = std::sqrt(uc * uc + vc * vc);
+                    if (sp > umax) umax = sp;
+                }
+            std::fprintf(stderr,
+                "t=%6.0fs  mass=%.9e  E=%.5e (PE=%.3e KE=%.3e)  |anom|max=%.4f m  |u|max=%.4f m/s\n",
+                double(n) * dt, double(mass), double(pe + ke), double(pe), double(ke), double(amax), double(umax));
         }
         core.step();
     }
