@@ -227,35 +227,50 @@ carries the fast surface gravity wave, and a **baroclinic** (per-layer deviation
 carries the slow dynamics. The barotropic state is 2D — `η`, and transports `U = Σₖ hₖuₖ`,
 `V = Σₖ hₖvₖ` — i.e. **exactly the M2 `BaroState`, reused**.
 
-**Algorithm** (per big baroclinic step `Δt`):
-1. **Baroclinic RHS** — the slow layered tendencies (advection, Coriolis, *baroclinic* PGF,
-   dissipation), computed once at `Δt`. Vertically integrate its momentum forcing → the
-   forcing the barotropic system feels.
-2. **Barotropic subcycle** — advance the 2D shallow-water system `(η, U, V)` `M` substeps at
-   `δt = Δt/M` (`M ≈ 2·c_ext/c_int`, ~30–60), forced by step 1. **This is the M2 barotropic
-   solver reused as a sub-policy.** *Time-average* `(η̄, Ū, V̄)` over the subcycle with a shaped
-   filter (ROMS-style cosine/power weights spanning ~2M substeps) to kill the aliased fast mode.
-3. **Couple back** — replace the layered depth-mean transport with the averaged barotropic
-   `(Ū, V̄)` so `Σₖ hₖuₖ^{n+1} = Ū` exactly (transport/mass consistency), and set `η^{n+1} = η̄`.
+**Algorithm — the MOM6/Hallberg split, ported from `../rakali_dc`** (battle-tested there; NOT
+the ROMS/Shchepetkin–McWilliams weighted scheme). Per big baroclinic step `Δt`, inside each
+outer RK2 (Heun) stage:
+1. **Slow RHS + forcing.** Compute the per-layer *slow* tendencies (baroclinic PGF, Coriolis +
+   vector-invariant advection, viscosity, drag, stress). Face-depth-mean them → `F_bt`, then
+   **subtract the barotropic projection of the PGF**: `F_bt_fast = F_bt − depth-mean(∇p)` — the
+   substep computes its own `−g∇η`, so without this the fast mode integrates the PGF twice and
+   `√(gH)` inflates to `√(2gH)`. Snapshot the entry depth-mean velocity `ubt_at_n` and set the
+   barotropic state from the layers (`η = Σₖhₖ − H_ref`, `U = Σₖ hₖuₖ / Σₖ hₖ`).
+2. **Barotropic subcycle — Forward-Backward Euler.** `M` substeps at `δt = Δt/M`: update `η`
+   FIRST (`∂η/∂t = −∇·(hU)`, consuming `Uⁿ`), then `U,V` (Sadourny Coriolis + KE-gradient +
+   *backward* `−g∇η` using the just-updated `η` + the constant `F_bt_fast`). FB is stable for
+   `δt·√(gH)·√(1/dx²+1/dy²) ≤ 1`. Keep a running sum, and at the end retain **both**: the
+   uniform time-mean transport `⟨hU⟩ = Σ/M` (for continuity) **and** the end-step velocity
+   `U_end` (for momentum) — the Hallberg dual anchor.
+3. **Couple back.** (a) *Continuity* advances the layer thicknesses with the slow flux
+   renormalised so `Σₖ hₖuₖ = ⟨hU⟩` (the time-mean) ⇒ `Σₖ hₖ = H + η_end` to machine eps.
+   (b) *Momentum*: inject `Δu = U_end − ubt_at_n − Δt·F_bt` into every layer — only the *fast*
+   increment (`−Δt·F_bt` removes the slow part already applied per layer). (c) Eulerian
+   `h`-rescale to close `Σₖ hₖ = H + η_end` (skipped under ALE; the remap is authoritative).
 
-**Fit to the architecture.** It is an **Integrator-axis** policy — `SplitExplicit<Baro, M>`,
-where `Baro` is the barotropic sub-solver (itself an integrator over a 2D `BaroState`) —
-*composition, not a new axis*. The unsplit `SSPRK3` stays selectable, which gives the split its
-**validation oracle: it must reproduce the unsplit two-layer run** (minus the fast surface
-transients) at a fraction of the cost. Value-semantic throughout: barotropic state + forcing are
-`BaroState`s in the same Arena; the subcycle is `for_each_cell` kernels; nothing new crosses the
-host/device line.
+**Fit to the architecture.** The barotropic momentum reuses our existing `SadournyEnstrophy` +
+`FvPgf` + `ContinuityFlux` **on the 2D `(η,U,V)` state** — maximal reuse; the only genuinely new
+code is the FB substep loop, the depth-mean forcing, and the couple-back. It is an
+**Integrator-axis** policy `SplitExplicit<Baro, M>` (composition, not a new axis). The unsplit
+`SSPRK3` stays selectable → the split's **validation oracle: reproduce the unsplit two-layer run**
+(minus fast surface transients) at a fraction of the cost. Value-semantic throughout; the
+subcycle is `for_each_cell` kernels; nothing new crosses the host/device line.
 
-**Three subtleties to get right** (flagged, not hand-waved): (a) the **averaging-filter shape**
-controls both stability and how well the fast mode is filtered — start from ROMS's flat-top
-power weights; (b) **mass conservation** requires the coupling to preserve `Σₖ hₖ = H + η̄` (the
-barotropic↔baroclinic consistency condition); (c) the **baroclinic PGF must exclude** the part
-already carried by the barotropic `η`, or the surface pressure is double-counted.
+**Three subtleties (all resolved in the rakali port):** (a) **Dual anchoring** (Hallberg 2009) —
+continuity uses the *time-mean* transport, momentum the *end-step* velocity; both must anchor at
+`t+Δt` or the gravity-wave phase speed is corrupted. Averaging is a **plain uniform mean**, no
+ROMS weights. (b) **PGF double-count guard** is two-sided: subtract the BT PGF projection from
+the forcing (step 1) *and* the `−Δt·F_bt` in the Δu correction (step 3b). (c) **Mass
+consistency** `Σₖ hₖ = H + η_end` is enforced by the mean-transport continuity + the h-rescale.
+
+**`M` (n_inner):** CFL-derived — `δt_safe = 0.65·l_cfl/c_ext`, `l_cfl = 1/√(1/dx²+1/dy²)` (=`dx/√2`
+uniform), `c_ext = √(g·H_max)`, `M = ⌈Δt/δt_safe⌉`, latched once at setup (0=auto, 1=unsplit,
+N=fixed).
 
 **Payoff & scope.** `dt` for the expensive layered RHS is now set by the internal/advective CFL →
-~20–50× fewer layered evaluations; the 2D subcycle is cheap (3 fields, no reconstruction). Net
-~10–30× wall-time — the difference between "a 300-day run is an overnight job" and "a coffee
-break." The next milestone after the (now-complete) unsplit two-layer core.
+~20–50× fewer layered evaluations; the 2D subcycle is cheap (3 fields, no reconstruction, FB not
+RK). Net ~10–30× wall-time — the difference between "a 300-day run is an overnight job" and "a
+coffee break." The next milestone after the (now-complete) unsplit two-layer core.
 
 ## 5. The compile-time policy axes (the payoff)
 
