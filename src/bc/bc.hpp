@@ -26,7 +26,7 @@ concept BoundaryCondition =
 
 class WallBC {
 public:
-    void fill_halos(BaroState s, const CartesianMesh& m) const {
+    template <Mesh M> void fill_halos(BaroState s, const M& m) const {
         // TODO(M2): reflect into ghost rows so ∂/∂n = 0 and normal face velocity
         // = 0 at walls (no-normal-flow). Runs before each stage → interior is
         // branch-free.
@@ -36,7 +36,7 @@ public:
 
 class PeriodicBC {
 public:
-    void fill_halos(BaroState s, const CartesianMesh& m) const {
+    template <Mesh M> void fill_halos(BaroState s, const M& m) const {
         // TODO(M2): copy the opposite interior edge into each ghost row (wrap).
         (void)s; (void)m;
     }

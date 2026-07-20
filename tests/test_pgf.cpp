@@ -76,3 +76,31 @@ TEST_CASE("FvPgf recovers a constant gradient exactly") {
         for (tc::Index i = 0; i < nx; ++i)
             CHECK(kv[i, j] == doctest::Approx(-g * sy));    // -g ∂η/∂y
 }
+
+TEST_CASE("zero_baro_state clears a dirty tendency (the +=-accumulation precondition)") {
+    const tc::Index nx = 6, ny = 5;
+    tc::CartesianMesh m(nx, ny, 100.0, 100.0);
+    tc::Arena arena(1u << 20);
+    tc::BaroState k = tc::allocate_baro_state(arena, m);
+
+    // dirty every staggered field with a distinct nonzero value
+    const tc::Field2 eta = k.eta, u = k.u, v = k.v;
+    tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
+                      [=](tc::Index i, tc::Index j) { eta[i, j] = tc::Real(7); });
+    tc::for_each_cell(m.extent_x(tc::Loc::XFace), m.extent_y(tc::Loc::XFace),
+                      [=](tc::Index i, tc::Index j) { u[i, j] = tc::Real(-3); });
+    tc::for_each_cell(m.extent_x(tc::Loc::YFace), m.extent_y(tc::Loc::YFace),
+                      [=](tc::Index i, tc::Index j) { v[i, j] = tc::Real(5); });
+
+    tc::zero_baro_state(k, m);
+
+    for (tc::Index j = 0; j < m.extent_y(tc::Loc::Center); ++j)
+        for (tc::Index i = 0; i < m.extent_x(tc::Loc::Center); ++i)
+            CHECK(eta[i, j] == doctest::Approx(0.0));
+    for (tc::Index j = 0; j < m.extent_y(tc::Loc::XFace); ++j)
+        for (tc::Index i = 0; i < m.extent_x(tc::Loc::XFace); ++i)
+            CHECK(u[i, j] == doctest::Approx(0.0));
+    for (tc::Index j = 0; j < m.extent_y(tc::Loc::YFace); ++j)
+        for (tc::Index i = 0; i < m.extent_x(tc::Loc::YFace); ++i)
+            CHECK(v[i, j] == doctest::Approx(0.0));
+}

@@ -29,11 +29,11 @@ concept CoriolisModule =
 class SadournyEnstrophy {
     Field2 q_{};      // potential vorticity at corners — persistent workspace
 public:
-    void init(Arena& a, const CartesianMesh& m) {
-        q_ = a.alloc2d(m.nx() + 1, m.ny() + 1);    // corners: (nx+1) × (ny+1)
+    template <Mesh M> void init(Arena& a, const M& m) {
+        q_ = a.alloc2d(m.extent_x(Loc::Corner), m.extent_y(Loc::Corner));   // corners
     }
 
-    void compute(BaroState s, BaroState k, const CartesianMesh& mesh, Params p) const {
+    template <Mesh M> void compute(BaroState s, BaroState k, const M& mesh, Params p) const {
         Field2 q = q_;      // hoist member → local; capture [=], NEVER `this`
         // TODO(M2): implement the Sadourny enstrophy scheme. Sketch:
         //     for_each_corner : q[i,j] = (mesh.coriolis(Corner,i,j) + ζ)/h_corner

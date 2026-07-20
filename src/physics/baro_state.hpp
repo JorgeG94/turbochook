@@ -24,6 +24,7 @@
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
+#include "numerics/parallel.hpp"
 
 namespace tc {
 
@@ -52,13 +53,28 @@ struct Params {
 // extent. One call, one owner. (Halo/ghost rows — decision #3 — get added once
 // the reconstruction's `nghost` and the BC fill are wired; the M2 stub uses
 // interior extents to keep the skeleton readable.)
-inline BaroState allocate_baro_state(Arena& a, const CartesianMesh& m) {
-    const Index nx = m.nx(), ny = m.ny();
+template <Mesh M>
+inline BaroState allocate_baro_state(Arena& a, const M& m) {
     return BaroState{
-        .eta = a.alloc2d(nx,     ny    ),
-        .u   = a.alloc2d(nx + 1, ny    ),
-        .v   = a.alloc2d(nx,     ny + 1),
+        .eta = a.alloc2d(m.extent_x(Loc::Center), m.extent_y(Loc::Center)),
+        .u   = a.alloc2d(m.extent_x(Loc::XFace),  m.extent_y(Loc::XFace)),
+        .v   = a.alloc2d(m.extent_x(Loc::YFace),  m.extent_y(Loc::YFace)),
     };
+}
+
+// Zero a state across every staggered field's full extent. baro_rhs calls this
+// before the operator SUM, because each operator ACCUMULATES (+=) into k — without
+// it, k holds the previous stage/step's tendencies and the RHS is silently wrong
+// (the arena starts zero, so only the FIRST call would accidentally be correct).
+template <Mesh M>
+inline void zero_baro_state(BaroState k, const M& m) {
+    const Field2 eta = k.eta, u = k.u, v = k.v;   // hoist views → capture [=], never `this`
+    for_each_cell(m.extent_x(Loc::Center), m.extent_y(Loc::Center),
+                  [=](Index i, Index j) { eta[i, j] = Real(0); });
+    for_each_cell(m.extent_x(Loc::XFace), m.extent_y(Loc::XFace),
+                  [=](Index i, Index j) { u[i, j] = Real(0); });
+    for_each_cell(m.extent_x(Loc::YFace), m.extent_y(Loc::YFace),
+                  [=](Index i, Index j) { v[i, j] = Real(0); });
 }
 
 } // namespace tc

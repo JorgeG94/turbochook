@@ -34,13 +34,14 @@ namespace tc {
 // The template parameters are constrained by the concepts — a mis-typed slot
 // (e.g. passing a BC where a Continuity goes) is a crisp compile error at the
 // instantiation, not a puzzle deep in a kernel.
-template <ContinuityModule Cont,
+template <Mesh             Msh,
+          ContinuityModule Cont,
           CoriolisModule   Cor,
           PgfModule        Pgf,
           BoundaryCondition Bc,
           Integrator       Integ>
 class OceanCore {
-    CartesianMesh mesh_;
+    Msh           mesh_;          // the grid model — a Mesh, not welded to Cartesian
     Arena&        arena_;         // borrowed, not owned — one arena for the run
     Params        p_{};
 
@@ -55,7 +56,7 @@ class OceanCore {
     BaroState k_{};               // one RK scratch register set (n_scratch = 1 here)
 
 public:
-    OceanCore(CartesianMesh mesh, Arena& a, Params p)
+    OceanCore(Msh mesh, Arena& a, Params p)
         : mesh_(mesh), arena_(a), p_(p) {}
 
     // Allocate everything ONCE, up front (arena discipline). Each module wires its
@@ -73,8 +74,11 @@ public:
     // The RHS operator: zero k, then SUM each module's tendency into it. This is
     // `baro_rhs` from DESIGN §6 — the composition of the policy slots.
     void baro_rhs(BaroState s, BaroState k) const {
-        // TODO(M2): zero k first (three for_each over the staggered extents) — the
-        // RHS is a SUM of operator tendencies, so each compute() accumulates (+=).
+        // The RHS is a SUM of operator tendencies: zero k, then each compute() += into
+        // it. Without the zero, k holds the previous stage/step's tendencies (ADR
+        // review: the arena starts zero, so only the FIRST call would be accidentally
+        // correct).
+        zero_baro_state(k, mesh_);
         cont_.compute(s, k, mesh_, p_);   // η tendency (thickness flux divergence)
         pgf_ .compute(s, k, mesh_, p_);   // -g ∇η into u, v
         cor_ .compute(s, k, mesh_, p_);   // PV-Coriolis + advection into u, v
@@ -100,6 +104,6 @@ public:
 // PPM continuity + Sadourny-enstrophy Coriolis + FV pressure gradient + wall BCs
 // + SSP-RK2. Swapping any policy is swapping one type here.
 using BarotropicPoC =
-    OceanCore<PpmContinuity, SadournyEnstrophy, FvPgf, WallBC, SSPRK2>;
+    OceanCore<CartesianMesh, PpmContinuity, SadournyEnstrophy, FvPgf, WallBC, SSPRK2>;
 
 } // namespace tc

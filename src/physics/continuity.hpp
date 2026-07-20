@@ -49,16 +49,16 @@ class ContinuityFlux {
 public:
     // Allocating from the MANAGED arena is all the "put it on the device" you
     // need — no separate host→device transfer step.
-    void init(Arena& a, const CartesianMesh& m) {
-        mass_flux_x_ = a.alloc2d(m.nx() + 1, m.ny());
-        mass_flux_y_ = a.alloc2d(m.nx(),     m.ny() + 1);
+    template <Mesh M> void init(Arena& a, const M& m) {
+        mass_flux_x_ = a.alloc2d(m.extent_x(Loc::XFace), m.extent_y(Loc::XFace));
+        mass_flux_y_ = a.alloc2d(m.extent_x(Loc::YFace), m.extent_y(Loc::YFace));
     }
 
     // compute: the GPU discipline in miniature. HOIST member views into locals,
     // then the kernel lambda captures [=] — NEVER `this` (capturing `this` passes
     // on host but hard-crashes on GPU with cudaErrorIllegalAddress — verified on
     // nvc++ 26.5 / V100). The math is the TODO; the discipline is the point.
-    void compute(BaroState s, BaroState k, const CartesianMesh& mesh, Params p) const {
+    template <Mesh M> void compute(BaroState s, BaroState k, const M& mesh, Params p) const {
         Field2 fx = mass_flux_x_, fy = mass_flux_y_;   // ← hoist, capture these by value
         // TODO(M2): implement the PPM swept thickness flux (the per-cell-gather
         // FaceView flux-divergence lands here — its first consumer). Sketch:

@@ -29,14 +29,14 @@ class FvPgf {
 public:
     // No workspace needed, but the slot's contract is {init; compute}, so we keep
     // a trivial init. (Unused params cast to void to silence warnings.)
-    void init(Arena& a, const CartesianMesh& m) { (void)a; (void)m; }
+    template <Mesh M> void init(Arena& a, const M& m) { (void)a; (void)m; }
 
     // ∂u/∂t += -g ∂η/∂x on u-faces, ∂v/∂t += -g ∂η/∂y on v-faces. A per-face write
     // (each face written once → no race). Neighbours + metric come from the mesh
     // via the FaceView seam (li/ri, span) — NEVER a hardcoded i-1 or a scalar dx
     // (ADR-7), so stretched/spherical drop in unchanged. Accumulates into k, so
     // baro_rhs must zero k before the operator sum.
-    void compute(BaroState s, BaroState k, const CartesianMesh& mesh, Params p) const {
+    template <Mesh M> void compute(BaroState s, BaroState k, const M& mesh, Params p) const {
         const Field2 eta = s.eta;             // hoist views → capture [=], never `this`
         const Field2 ku = k.u, kv = k.v;
         const Real   g  = p.g;

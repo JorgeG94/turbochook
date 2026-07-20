@@ -18,6 +18,7 @@
 // =============================================================================
 
 #include <concepts>
+#include <type_traits>
 #include "core/types.hpp"
 
 namespace tc {
@@ -46,8 +47,16 @@ constexpr bool y_staggered(Loc l) { return l == Loc::YFace || l == Loc::Corner; 
 // centres, faces and corners. Metrics (dx/dy/area) feed operators; edge() feeds
 // the halo fill; wet() is the masking trait. A missing accessor → not a Mesh
 // (crisp error at the model's static_assert, not deep in a kernel).
+//
+// TRIVIALLY COPYABLE is a hard requirement, not a hope: a Mesh is captured BY
+// VALUE into device kernels (for_each_face, diagnostics). A future masked/compact
+// mesh that held an OWNING member (a std::vector mask, a connectivity table) would
+// otherwise satisfy the shape, then hard-crash on the GPU with the exact
+// capture-an-owner failure the design exists to avoid — and pass on the host.
+// Masks/tables must be non-owning views (Field), so the mesh stays a POD.
 template <class M>
-concept Mesh = requires(const M m, Index i, Index j, Loc loc, Edge e) {
+concept Mesh = std::is_trivially_copyable_v<M> &&
+    requires(const M m, Index i, Index j, Loc loc, Edge e) {
     { m.nx() }                -> std::convertible_to<Index>;  // interior cells, x
     { m.ny() }                -> std::convertible_to<Index>;  // interior cells, y
     { m.extent_x(loc) }       -> std::convertible_to<Index>;  // #points along x at loc
