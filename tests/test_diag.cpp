@@ -65,3 +65,29 @@ TEST_CASE("any_nonfinite: clean state passes, a poked NaN is caught") {
                       [=](tc::Index i, tc::Index j) { if (i == 1 && j == 2) u[i, j] = std::nan(""); });
     CHECK(tc::any_nonfinite(s, m) == true);
 }
+
+// The generalisation (ADR-8): the reduction is factored from the integrand — the SAME
+// global_integral yields total_mass, "total salt", any conserved total.
+TEST_CASE("global_integral: one reduce, many integrands (mass, salt, energy-density)") {
+    using tc::Index;
+    const Index nx = 8, ny = 6;
+    const tc::Real dx = 100.0, dy = 50.0, S0 = 0.035;
+    tc::CartesianMesh m(nx, ny, dx, dy);
+    tc::Arena a(4u << 20);
+    tc::BaroState s = tc::allocate_baro_state(a, m);
+    tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
+                      [=](Index i, Index j) { s.eta[i, j] = 1000.0 + i; });   // a varying "thickness"
+    const tc::Field2 h = s.eta;
+
+    // total_mass IS global_integral of the thickness
+    const tc::Real mass = tc::global_integral(m, [=](Index i, Index j) { return h[i, j]; });
+    CHECK(mass == doctest::Approx(tc::total_mass(s, m)));
+
+    // "total salt" = ∫ h·S with S=const ⇒ exactly S·mass — same reduce, new integrand
+    const tc::Real salt = tc::global_integral(m, [=](Index i, Index j) { return h[i, j] * S0; });
+    CHECK(salt == doctest::Approx(S0 * mass));
+
+    // global_max picks the extreme cell
+    const tc::Real hmax = tc::global_max(m, [=](Index i, Index j) { return h[i, j]; });
+    CHECK(hmax == doctest::Approx(1000.0 + (nx - 1)));
+}

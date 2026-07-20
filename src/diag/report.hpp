@@ -20,6 +20,7 @@
 #include "core/types.hpp"
 #include "mesh/mesh.hpp"
 #include "physics/layered_state.hpp"
+#include "diag/diagnostics.hpp"
 
 namespace tc {
 
@@ -28,27 +29,11 @@ class Reporter {
     std::chrono::steady_clock::time_point t0_{};
     bool started_ = false, first_ = true;
 
-    // area-weighted host reductions: total mass, max speed, kinetic energy, min dx
-    template <int NL, class M>
-    static void scan(const LayeredState<NL>& s, const M& mesh,
-                     Real& mass, Real& umax, Real& ke, Real& dxmin) {
-        const Index nx = mesh.nx(), ny = mesh.ny();
-        mass = 0; ke = 0; Real umax2 = 0; dxmin = Real(1e30);
-        for (Index j = 0; j < ny; ++j) dxmin = std::min(dxmin, mesh.dx(Loc::Center, 0, j));
-        for (int l = 0; l < NL; ++l) {
-            const Field2 h = s.layer[l].eta, u = s.layer[l].u, v = s.layer[l].v;
-            for (Index j = 0; j < ny; ++j)
-                for (Index i = 0; i < nx; ++i) {
-                    const Real ar = mesh.area(Loc::Center, i, j);
-                    const Real uc = Real(0.5) * (u[i, j] + u[i + 1, j]);   // faces → centre
-                    const Real vc = Real(0.5) * (v[i, j] + v[i, j + 1]);
-                    const Real sp2 = uc * uc + vc * vc;
-                    mass += h[i, j] * ar;
-                    ke   += Real(0.5) * h[i, j] * sp2 * ar;
-                    if (sp2 > umax2) umax2 = sp2;
-                }
-        }
-        umax = std::sqrt(umax2);
+    // min dx (metrics only — no state, no migration)
+    template <class M> static Real min_dx(const M& mesh) {
+        Real d = Real(1e30);
+        for (Index j = 0; j < mesh.ny(); ++j) d = std::min(d, mesh.dx(Loc::Center, 0, j));
+        return d;
     }
 
     static void header() {
@@ -70,8 +55,12 @@ public:
     void report(const LayeredState<NL>& s, const M& mesh, Real day, Real dt, long step, Real total_days,
                 std::initializer_list<std::pair<const char*, Real>> tracers = {}) {
         if (!started_) start();
-        Real mass, umax, ke, dxmin;
-        scan(s, mesh, mass, umax, ke, dxmin);
+        // device-offloading reductions — only the scalars cross to host (ADR-8), no
+        // full-state migration. Each is the SAME global reduce over a different integrand.
+        const Real mass  = total_mass(s, mesh);
+        const Real umax  = max_speed(s, mesh);
+        const Real ke    = total_ke(s, mesh);
+        const Real dxmin = min_dx(mesh);
         if (first_) { mass0_ = mass; header(); }
 
         const Real wall  = std::chrono::duration<Real>(std::chrono::steady_clock::now() - t0_).count();

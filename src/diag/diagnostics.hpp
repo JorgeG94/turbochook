@@ -18,31 +18,58 @@
 #include <numeric>
 #include <ranges>
 #include <cmath>
+#include <algorithm>
 #include <functional>
 #include "core/types.hpp"
 #include "mesh/mesh.hpp"
 #include "physics/baro_state.hpp"
+#include "physics/layered_state.hpp"
 #include "numerics/parallel.hpp"
+#include "diag/reduce.hpp"
 
 namespace tc {
 
-// total_mass = Σ η·area over wet centres. Doubles as the M2 continuity oracle:
-// drift ~ machine-eps IS mass conservation (the analytical test reuses this).
+// ── the "totals" are all ONE reduce over different integrands (ADR-8) ────────────
+// total_mass = ∫ h — the mass/continuity oracle (drift ~ eps IS conservation). It is
+// `global_integral` of the thickness; total_salt would be ∫h·S, etc. (reduce.hpp).
 template <Mesh M>
 Real total_mass(const BaroState& s, const M& mesh) {
-    const Field2 eta = s.eta;                          // hoist view → capture by value
-    const M      m   = mesh;                           // small POD mesh, by value (never `this`)
-    // NOTE (DESIGN #3): iterates the full extent, which equals the interior only while
-    // nghost=0 (no halo yet). When ghosts land, this MUST iterate the interior range or it
-    // silently sums halo cells — one of the pervasive-reindex sites, not a drop-in.
-    const Index  nx  = m.extent_x(Loc::Center);
-    const Index  ny  = m.extent_y(Loc::Center);
-    auto ids = std::views::iota(Index{0}, nx * ny);
-    return std::transform_reduce(par, ids.begin(), ids.end(), Real(0), std::plus<Real>{},
-        [=](Index n) {
-            const Index i = n % nx, j = n / nx;
-            return eta[i, j] * m.area(Loc::Center, i, j) * m.wet(Loc::Center, i, j);
+    const Field2 h = s.eta;
+    return global_integral(mesh, [=](Index i, Index j) { return h[i, j]; });
+}
+template <int NL, Mesh M>
+Real total_mass(const LayeredState<NL>& s, const M& mesh) {
+    Real m = 0; for (int l = 0; l < NL; ++l) m += total_mass(s.layer[l], mesh); return m;
+}
+
+// total kinetic energy = ∫ ½ h |u_centre|²  (faces averaged to centres).
+template <int NL, Mesh M>
+Real total_ke(const LayeredState<NL>& s, const M& mesh) {
+    Real ke = 0;
+    for (int l = 0; l < NL; ++l) {
+        const Field2 h = s.layer[l].eta, u = s.layer[l].u, v = s.layer[l].v;
+        ke += global_integral(mesh, [=](Index i, Index j) {
+            const Real uc = Real(0.5) * (u[i, j] + u[i + 1, j]);
+            const Real vc = Real(0.5) * (v[i, j] + v[i, j + 1]);
+            return Real(0.5) * h[i, j] * (uc * uc + vc * vc);
         });
+    }
+    return ke;
+}
+
+// max flow speed over all layers (centre |u|) — the CFL / |u|max diagnostic.
+template <int NL, Mesh M>
+Real max_speed(const LayeredState<NL>& s, const M& mesh) {
+    Real mx = 0;
+    for (int l = 0; l < NL; ++l) {
+        const Field2 u = s.layer[l].u, v = s.layer[l].v;
+        mx = std::max(mx, global_max(mesh, [=](Index i, Index j) {
+            const Real uc = Real(0.5) * (u[i, j] + u[i + 1, j]);
+            const Real vc = Real(0.5) * (v[i, j] + v[i, j + 1]);
+            return std::sqrt(uc * uc + vc * vc);
+        }));
+    }
+    return mx;
 }
 
 // Reduce one field to "does it hold any non-finite value?" — a device OR expressed

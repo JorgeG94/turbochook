@@ -192,25 +192,41 @@ through the mesh.
 `for_each_*(mesh, …)`. Tripolar = a spherical model + `edge(North)=Fold` halo. Packed/unstructured
 stays deferred.
 
-### ADR-8 — Diagnostics are device-resident reductions + a host `Monitor`
+### ADR-8 — Diagnostics: an integrand × a reduction → any output rank (device-resident)
 
-A diagnostic is a **pure reduction over (state, mesh) → a scalar** (`transform_reduce` over
-`std::views::iota`), **device-resident**: only the scalar crosses to host. A per-step *full-field*
-host copy silently reintroduces the ~100–140× migration penalty (STATUS #4) — **never** do that.
+A diagnostic is **not** just "→ a scalar" — that was too narrow. It is a **pure per-cell
+INTEGRAND** (a field; a derivative like ζ; a product like `h·S` or KE; an EOS call) composed
+with a **REDUCTION over a chosen dimension-set**. The reduced dimensionality picks the OUTPUT
+RANK, and real ocean-model diagnostics span all of them:
 
-- **Primitives** (free functions, unit-testable, offloading): `total_mass` (Σ η·area·wet),
-  `total_energy` (KE+PE), `total_enstrophy` (Σ ½q²·area — needs PV), `max_speed`, `max_cfl`,
-  `any_nonfinite`. Area-weighting uses the mesh `area`/`wet` (wet cells only).
-- **Host driver `Monitor`**: runs a set at a **cadence**, logs via `tc::logger()`, and enforces
-  **invariants → throws host-side** (NaN/Inf, `CFL>1` → `throw Error(Errc::…)`). This *is* the
-  error discipline: kernels never throw; a post-step host reduction detects and throws.
-- **Synergy:** the conservation reductions **are the M2 validation oracles** — total-mass drift
-  ~ machine-eps *is* the continuity test. Diagnostics and analytical tests share one primitive set.
-- **Cadence:** CFL/NaN are cheap + safety-critical (every step or few); energy/mass every
-  `diag_every`.
+| reduce over | output | examples |
+|---|---|---|
+| `{all space}` | 0-D scalar | total mass / salt / heat / energy, max\|u\|, max CFL |
+| `{x}` (or `{x,t}`) | 1-D profile | zonal-mean jet `ū(y)`, overturning / streamfunction |
+| `{}` (none) | 2-D/3-D field | vorticity ζ, PV, EKE, divergence, density(EOS) |
+| `{t}` | time-mean field | mean flow, mean EKE |
 
-**Scope:** M2 builds `total_mass` + `max_cfl` + `any_nonfinite` + `Monitor`; enstrophy/energy
-spectra follow with PV/layers.
+**The reduction is factored from the integrand** (`diag/reduce.hpp`): `global_integral` =
+`Σ integrand·area·wet` is the ONE verb, and `total_mass = ∫h`, `total_salt = ∫h·S`,
+`total_energy = ∫(½h|u|²+½gη²)` are one reduce + N integrands — a conserved-tracer total is a
+*lambda, not a new function*. `global_max` likewise. Zonal-mean / time-mean are the same idea
+reducing over fewer dimensions.
+
+**Device-resident, offloading.** Integrands are pure functors over views (the physics-kernel
+pattern); reductions are `transform_reduce` over a flat iota — computed ON-DEVICE, only the
+reduced result crosses to host. A per-step full-field host copy reintroduces the ~100–140×
+migration penalty (STATUS #4) — never do that. (The `Reporter` uses these reduces, not host
+loops.)
+
+**Sinks by rank:** 0-D → the log / `Reporter`; ≥1-D → NetCDF (`io/ocean_output.hpp`).
+
+**Invariants → host throw:** `any_nonfinite`, `max_cfl>1` are reductions the host checks then
+throws on (kernels never throw — error.hpp). The conservation reductions double as the
+validation oracles: mass drift ~ machine-eps *is* the continuity test.
+
+**Built:** `global_integral`/`global_max`, `total_mass`/`total_ke`/`max_speed`, the `Reporter`
+(0-D sink) and `OceanOutput` (field sink). **Next:** derived-field diagnostics (vorticity, EKE →
+NetCDF), zonal-mean profiles, time-means.
 
 ### ADR-9 — Split-explicit time stepping: subcycle the barotropic mode, don't resolve it with `dt`
 
