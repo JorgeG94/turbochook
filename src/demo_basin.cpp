@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     tc::for_each_cell(mesh.extent_x(tc::Loc::YFace), mesh.extent_y(tc::Loc::YFace), [=](tc::Index i, tc::Index j) { v[i, j] = 0; });
 
     const int nsteps = argc > 3 ? std::atoi(argv[3]) : 1100;    // arg3: number of steps
-    const int every  = nsteps / 200 > 0 ? nsteps / 200 : 1;    // ~200 frames regardless of length
+    const int every  = argc > 4 ? std::atoi(argv[4]) : 8;      // arg4: steps/frame (FIXED pacing)
     const int ppx = 4;
     const tc::Real vis = 0.5 * A;
     const int W = int(nx) * ppx, Hh = int(ny) * ppx;
