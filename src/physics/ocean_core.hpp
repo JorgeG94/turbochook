@@ -18,6 +18,8 @@
 //     ∂v/∂t = -g ∂η/∂y - (f u)|v + adv
 // =============================================================================
 
+#include <array>
+#include <span>
 #include "lib/arena.hpp"
 #include "lib/log.hpp"
 #include "lib/profiler.hpp"
@@ -52,8 +54,8 @@ class OceanCore {
     Pgf  pgf_{};
     Bc   bc_{};
 
-    BaroState state_{};           // the prognostic state
-    BaroState k_{};               // one RK scratch register set (n_scratch = 1 here)
+    BaroState state_{};                             // the prognostic state
+    std::array<BaroState, Integ::n_scratch> scratch_{};  // RK register-sets (integrator sizes it)
 
 public:
     OceanCore(Msh mesh, Arena& a, Params p)
@@ -63,7 +65,7 @@ public:
     // own workspace; allocating from the managed arena is all the device setup.
     void init() {
         state_ = allocate_baro_state(arena_, mesh_);
-        k_     = allocate_baro_state(arena_, mesh_);
+        for (BaroState& reg : scratch_) reg = allocate_baro_state(arena_, mesh_);
         cont_.init(arena_, mesh_);
         cor_ .init(arena_, mesh_);
         pgf_ .init(arena_, mesh_);
@@ -90,7 +92,7 @@ public:
     void step() {
         TC_PROFILE("step");
         Integ::advance(
-            state_, k_,
+            state_, std::span<BaroState>(scratch_),
             [this](BaroState s, BaroState k) { baro_rhs(s, k); },   // RhsOp
             [this](BaroState s)              { bc_.fill_halos(s, mesh_); },  // BcOp
             p_);

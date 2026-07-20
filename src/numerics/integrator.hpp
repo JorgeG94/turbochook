@@ -3,53 +3,75 @@
 // numerics/integrator.hpp — the time-integration policy.
 //
 // KEY IDEA (DESIGN decision #7.2): the integrator knows NOTHING about physics.
-// It's over (state, scratch, an RHS callable, a BC callable, params) — it only
-// fills ghosts, calls the RHS op, and combines stages. Swap Fwd-Euler ↔ SSP-RK2
-// without touching a single operator. This clean separation is why the RHS is
-// passed AS A CALLABLE (a template parameter), not hard-wired.
+// It's over (state, scratch registers, an RHS callable, a BC callable, params) —
+// it only fills ghosts, calls the RHS op, and combines stages. Swap Fwd-Euler ↔
+// SSP-RK2 without touching a single operator. This clean separation is why the RHS
+// is passed AS A CALLABLE (a template parameter), not hard-wired.
 //
-// `n_scratch` (a compile-time constant) tells the caller how many extra register
-// sets (BaroStates) to allocate for the stages. That's the whole concept.
+// REGISTERS (ADR review fix): a scheme declares how many scratch register-sets it
+// needs via `n_scratch`, and `advance` receives EXACTLY that many as a
+// `std::span<BaroState>`. Heun (SSP-RK2) is low-storage with 2: one tendency
+// register + one predictor. The caller (OceanCore) allocates `n_scratch` states
+// from the arena once and hands them in — the interface can now actually hold the
+// registers RK2 needs (the old single-`k` signature could not).
 // =============================================================================
 
 #include <concepts>
+#include <span>
 #include "physics/baro_state.hpp"
 
 namespace tc {
 
+namespace detail {
+// Named stand-ins for the RHS/BC callables, so the concept can constrain `advance`'s
+// signature (a lambda in a requires-expression is fussy; a named type is clean).
+struct SampleRhs { void operator()(BaroState, BaroState) const {} };
+struct SampleBc  { void operator()(BaroState) const {} };
+}  // namespace detail
+
+// A time integrator declares `n_scratch` AND provides a conforming `advance`. The
+// second requirement is what makes a mis-signatured stepper fail HERE, not deep in
+// OceanCore::step.
 template <class I>
-concept Integrator = requires {
-    { I::n_scratch } -> std::convertible_to<int>;
-};
+concept Integrator =
+    requires(BaroState s, std::span<BaroState> scratch, Params p,
+             detail::SampleRhs rhs, detail::SampleBc bc) {
+        { I::n_scratch } -> std::convertible_to<int>;
+        { I::advance(s, scratch, rhs, bc, p) };
+    };
 
-// Strong-Stability-Preserving RK2 (Heun). One extra stage register.
+// Strong-Stability-Preserving RK2 (Heun). Low-storage: a tendency register + a
+// predictor register = 2 scratch sets.
 struct SSPRK2 {
-    static constexpr int n_scratch = 1;
+    static constexpr int n_scratch = 2;
 
-    // advance is a TEMPLATE over the RHS/BC callables → physics-agnostic and
-    // fully inlined (no std::function, no virtual). `RhsOp` computes tendencies
-    // into k; `BcOp` fills halos. These callables run on the HOST and internally
-    // launch the for_each kernels — so THEY may capture `this` of the OceanCore;
-    // only the innermost kernel lambdas must not.
+    // `advance` is a TEMPLATE over the RHS/BC callables → physics-agnostic and fully
+    // inlined (no std::function, no virtual). `RhsOp` computes tendencies into a
+    // register; `BcOp` fills halos. These callables run on the HOST and internally
+    // launch the for_each kernels — so THEY may capture `this` of the OceanCore; only
+    // the innermost kernel lambdas must not.
     template <class RhsOp, class BcOp>
-    static void advance(BaroState s, BaroState k, RhsOp rhs, BcOp bc, Params p) {
-        // TODO(M2): the two Heun stages, e.g.
-        //   bc(s);  rhs(s, k);                       // k = f(s)
-        //   combine(s_star, s, k, 1, p.dt);          // s* = s + dt·k   (per field)
-        //   bc(s_star); rhs(s_star, k2);             // k2 = f(s*)
-        //   combine(s, s, k, k2, 1, dt/2, dt/2);     // s += dt/2·(k+k2)
-        // `combine` is a small axpy over each staggered field (its own extent).
-        (void)s; (void)k; (void)rhs; (void)bc; (void)p;
+    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
+        // TODO(M2): Heun, low-storage with k=scratch[0] (tendency), s1=scratch[1]
+        // (predictor):
+        //   bc(s);   rhs(s, k);                 // k = f(s)
+        //   axpy(s1, s, p.dt, k);               // s1 = s + dt·k        (predictor)
+        //   axpy(s,  s, 0.5*p.dt, k);           // s += dt/2·k
+        //   bc(s1);  rhs(s1, k);                // k = f(s1)
+        //   axpy(s,  s, 0.5*p.dt, k);           // s += dt/2·k → s + dt/2·(k1+k2)
+        // `axpy` is a small per-field combine over each staggered extent.
+        (void)s; (void)scratch; (void)rhs; (void)bc; (void)p;
     }
 };
 
 // Forward Euler — the simplest possible, useful as an M2 warm-up / debug baseline.
+// One tendency register.
 struct ForwardEuler {
     static constexpr int n_scratch = 1;
     template <class RhsOp, class BcOp>
-    static void advance(BaroState s, BaroState k, RhsOp rhs, BcOp bc, Params p) {
-        // TODO: bc(s); rhs(s,k); combine(s, s, k, 1, p.dt);
-        (void)s; (void)k; (void)rhs; (void)bc; (void)p;
+    static void advance(BaroState s, std::span<BaroState> scratch, RhsOp rhs, BcOp bc, Params p) {
+        // TODO: bc(s); rhs(s, scratch[0]); axpy(s, s, p.dt, scratch[0]);
+        (void)s; (void)scratch; (void)rhs; (void)bc; (void)p;
     }
 };
 
