@@ -33,10 +33,49 @@
 #include <cmath>
 #include "core/types.hpp"
 #include "lib/arena.hpp"
+#include "mesh/mesh.hpp"
 #include "physics/baro_state.hpp"
 #include "physics/layered_state.hpp"
+#include "numerics/parallel.hpp"
 
 namespace tc {
+
+// ── Mode split: layers → barotropic (rakali derive_bt_from_layers) ───────────────
+// Total column thickness at centres  bt.η = Σₖ hₖ  (= H_ref + η), and the DEPTH-MEAN
+// face velocity  bt.u = Σₖ (h_faceₖ·uₖ) / Σₖ h_faceₖ  (transport-weighted; h_faceₖ is
+// the layer thickness averaged to the face). This is the state the barotropic
+// subcycle starts from, and its inverse (the couple-back) reinjects the average.
+template <int NL, Mesh M>
+inline void derive_bt_from_layers(LayeredState<NL> s, BaroState bt, const M& mesh) {
+    const M m = mesh;
+    // centres: total thickness
+    const Field2 bte = bt.eta;
+    for_each_cell(m.extent_x(Loc::Center), m.extent_y(Loc::Center), [=](Index i, Index j) {
+        Real h = 0;
+        for (int l = 0; l < NL; ++l) h += s.layer[l].eta[i, j];
+        bte[i, j] = h;
+    });
+    // x-faces: transport-weighted depth-mean of u (h_faceₖ = ½(hₖ[i-1]+hₖ[i]))
+    const Field2 btu = bt.u;
+    for_each_cell(m.extent_x(Loc::XFace), m.extent_y(Loc::XFace), [=](Index i, Index j) {
+        Real num = 0, den = 0;
+        for (int l = 0; l < NL; ++l) {
+            const Real hf = Real(0.5) * (bc_at(m, s.layer[l].eta, i - 1, j) + bc_at(m, s.layer[l].eta, i, j));
+            num += hf * s.layer[l].u[i, j]; den += hf;
+        }
+        btu[i, j] = den > Real(0) ? num / den : Real(0);
+    });
+    // y-faces: mirror (h_faceₖ = ½(hₖ[j-1]+hₖ[j]))
+    const Field2 btv = bt.v;
+    for_each_cell(m.extent_x(Loc::YFace), m.extent_y(Loc::YFace), [=](Index i, Index j) {
+        Real num = 0, den = 0;
+        for (int l = 0; l < NL; ++l) {
+            const Real hf = Real(0.5) * (bc_at(m, s.layer[l].eta, i, j - 1) + bc_at(m, s.layer[l].eta, i, j));
+            num += hf * s.layer[l].v[i, j]; den += hf;
+        }
+        btv[i, j] = den > Real(0) ? num / den : Real(0);
+    });
+}
 
 // ── n_inner (M): CFL-derived barotropic substep count (rakali bt_auto_n_inner) ───
 // δt_safe = cfl_safety·l_cfl/c_ext,  l_cfl = 1/√(1/dx²+1/dy²) (=dx/√2 uniform),
