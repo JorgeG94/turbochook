@@ -19,6 +19,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "core/types.hpp"
 #include "lib/arena.hpp"
@@ -148,6 +149,7 @@ int main(int argc, char** argv) {
 #ifdef TC_HAVE_NETCDF
     tc::OceanOutput<2, float> ncout(outdir + "/state.nc", mesh, "degrees_east", "degrees_north");
 #endif
+    const auto t_start = std::chrono::steady_clock::now();
     int frame = 0;
     for (int n = 0; n <= nsteps; ++n) {
         if (n % every == 0) {
@@ -179,6 +181,9 @@ int main(int argc, char** argv) {
         shapiro_center(h1, tmp, mesh, eps_shapiro);
         shapiro_center(h2, tmp, mesh, eps_shapiro);
     }
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
+    std::fprintf(stderr, "\n  done: %.0f sim-days in %.1f s wall  (%.2f s/sim-day, %.0f steps/s)\n",
+                 double(days), wall, wall / (days > 0 ? days : 1.0), nsteps / (wall > 0 ? wall : 1.0));
     std::printf("bc_inst: wrote %d frames (%dx%d) to %s\n", frame, W, Hh, outdir.c_str());
     return 0;
 }
