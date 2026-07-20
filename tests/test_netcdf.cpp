@@ -92,8 +92,8 @@ TEST_CASE("netcdf: OceanOutput writes a two-layer state (faces→centres, CF, pe
     std::system("mkdir -p tmp");
     const char* path = "tmp/test_ocean.nc";
     { tc::OceanOutput<2> out(path, mesh, "m", "m");
-      out.write(s, 0.0);
-      out.write(s, 3600.0);
+      out.write(s, mesh, 0.0);
+      out.write(s, mesh, 3600.0);
       CHECK(out.records() == 2); }                             // RAII closes here
 
     auto f = tc::nc::File::open(path);
@@ -110,6 +110,35 @@ TEST_CASE("netcdf: OceanOutput writes a two-layer state (faces→centres, CF, pe
                 CHECK(h[at(0, l, j, i)] == doctest::Approx(100.0 * (l + 1) + i));            // thickness stored as-is
                 CHECK(u[at(0, l, j, i)] == doctest::Approx(0.1 * (l + 1) + 0.01 * i + 0.005)); // face→centre avg
             }
+    std::remove(path);
+}
+
+TEST_CASE("netcdf: OceanOutput zeta = relative vorticity of a shear flow") {
+    using tc::Index; using tc::Real;
+    const Index nx = 16, ny = 16;
+    const Real dx = 1000.0, dy = 1000.0, shear = 1.0e-4;
+    tc::CartesianMesh mesh(nx, ny, dx, dy);
+    tc::Arena arena(8u << 20);
+    auto s = tc::allocate_layered_state<2>(arena, mesh);
+    // u = shear·y (linear shear) ⇒ ζ = -∂u/∂y = -shear ; v = 0
+    tc::for_each_cell(mesh.extent_x(tc::Loc::Center), mesh.extent_y(tc::Loc::Center),
+        [=](Index i, Index j) { s.layer[0].eta[i, j] = 1000.0; s.layer[1].eta[i, j] = 1000.0; });
+    tc::for_each_cell(mesh.extent_x(tc::Loc::XFace), mesh.extent_y(tc::Loc::XFace),
+        [=](Index i, Index j) { const Real y = mesh.y(tc::Loc::XFace, i, j);
+                                s.layer[0].u[i, j] = shear * y; s.layer[1].u[i, j] = shear * y; });
+    tc::for_each_cell(mesh.extent_x(tc::Loc::YFace), mesh.extent_y(tc::Loc::YFace),
+        [=](Index i, Index j) { s.layer[0].v[i, j] = 0; s.layer[1].v[i, j] = 0; });
+
+    std::system("mkdir -p tmp");
+    const char* path = "tmp/test_vort.nc";
+    { tc::OceanOutput<2> out(path, mesh); out.write(s, mesh, 0.0); }
+
+    auto f = tc::nc::File::open(path);
+    std::vector<double> z(std::size_t(2) * ny * nx);
+    f.get_all(f.varid("zeta"), z.data());                 // (time,layer,y,x); rec 0, layer 0
+    for (int j = 3; j < ny - 3; ++j)
+        for (int i = 3; i < nx - 3; ++i)
+            CHECK(z[std::size_t(j) * nx + i] == doctest::Approx(-shear).epsilon(1e-6));
     std::remove(path);
 }
 #endif  // TC_HAVE_NETCDF

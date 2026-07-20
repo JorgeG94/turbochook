@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
         if (n % (every * 10) == 0) {
             rep.report(core.state(), mesh, Real(n) * dt / 86400.0, dt, long(n), days);
 #ifdef TC_HAVE_NETCDF
-            ncout.write(core.state(), Real(n) * dt);
+            ncout.write(core.state(), mesh, Real(n) * dt);
 #endif
         }
         core.step();
