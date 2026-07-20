@@ -43,11 +43,16 @@ class SplitTwoLayerCore {
     Params p_{};
     int    M_ = M;
 
-    Cont  cont_{};                                  // per-layer continuity
+    Cont  cont_{};                                  // per-layer continuity (PPM: accurate thickness/tracers)
     Cor   cor_{};                                   // per-layer Coriolis + advection
     Pgf2L pgf_{};                                   // two-layer reduced-gravity PGF
     Bc    bc_{};
-    BarotropicSolver<Cont, Cor, FvPgf> bt_solver_{};
+    // The barotropic mode is the FAST surface gravity wave, not a tracer — it needs no
+    // PPM reconstruction (rakali uses a plain centred face thickness). Running PPM's
+    // 5-cell window+limiter M×/step was the nsys hot path; cheap 1st-order Pcm on the
+    // subcycle guts it while the LAYERS keep PPM. (The FB gravity wave is set by the
+    // PGF↔continuity coupling, not advection, so upwind diffusion barely touches it.)
+    BarotropicSolver<ContinuityFlux<Pcm>, Cor, FvPgf> bt_solver_{};
 
     LayeredState<NL> state_{};
     LayeredState<NL> s0_{};                         // saved s^n for the SSP-RK3 outer
