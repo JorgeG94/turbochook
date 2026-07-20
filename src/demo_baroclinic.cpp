@@ -25,6 +25,7 @@
 #include "numerics/parallel.hpp"
 #include "mesh/spherical_mesh.hpp"
 #include "physics/layered_state.hpp"
+#include "diag/report.hpp"
 #include "physics/multilayer_core.hpp"
 
 using tc::Real;
@@ -140,6 +141,7 @@ int main(int argc, char** argv) {
     std::vector<unsigned char> img(std::size_t(W) * Hh * 3);
     const Real vis = 1.2 * Dxi;                                     // colour range on ξ
 
+    tc::Reporter rep;
     int frame = 0;
     for (int n = 0; n <= nsteps; ++n) {
         if (n % every == 0) {
@@ -161,22 +163,8 @@ int main(int argc, char** argv) {
             }
             ++frame;
         }
-        if (n % (every * 10) == 0) {
-            Real m1 = 0, u1max = 0, v1max = 0;
-            for (Index j = 0; j < N; ++j)
-                for (Index i = 0; i < N; ++i) {
-                    m1 += h1[i, j] * mesh.area(Loc::Center, i, j);
-                    if (std::abs(u1[i, j]) > u1max) u1max = std::abs(u1[i, j]);
-                }
-            Real v2max = 0;
-            for (Index j = 0; j <= N; ++j)                          // v1max: base state v≡0 ⇒ pure instability signal
-                for (Index i = 0; i < N; ++i) {
-                    if (std::abs(v1[i, j]) > v1max) v1max = std::abs(v1[i, j]);
-                    if (std::abs(v2[i, j]) > v2max) v2max = std::abs(v2[i, j]);
-                }
-            std::fprintf(stderr, "t=%6.2fd  mass1=%.8e  |u1|max=%.4f  |v1|max=%.5f  |v2|max=%.5f m/s\n",
-                         double(n) * dt / 86400.0, double(m1), double(u1max), double(v1max), double(v2max));
-        }
+        if (n % (every * 10) == 0)
+            rep.report(core.state(), mesh, Real(n) * dt / 86400.0, dt, long(n), days);
         core.step();
         shapiro_center(h1, tmp, mesh, eps_shapiro);
         shapiro_center(h2, tmp, mesh, eps_shapiro);
