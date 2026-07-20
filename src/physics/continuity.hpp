@@ -74,16 +74,20 @@ public:
         const Field2 fx = mass_flux_x_, fy = mass_flux_y_;
         const Field2 ke = k.eta;
         const Index  nx = m.nx(), ny = m.ny();
+        const bool per_x = (m.edge(Edge::West)  == EdgeConn::Periodic);
+        const bool per_y = (m.edge(Edge::South) == EdgeConn::Periodic);
         constexpr int R = Scheme::radius;
         (void)p;
 
-        // ── Pass 1: x-face mass flux. Interior faces i∈[1,nx-1]; walls i=0,nx → 0. ──
+        // ── Pass 1: x-face mass flux. wall-x: interior i∈[1,nx-1], walls i=0,nx→0.
+        //    periodic-x: all faces i∈[0,nx] via wrapped stencil (bc_at); faces 0,nx
+        //    then carry the same wrap flux, so pass-3's fx[i+1]-fx[i] closes. ──
         for_each_cell(nx + 1, ny, [=](Index i, Index j) {
-            if (i == 0 || i == nx) { fx[i, j] = Real(0); return; }        // wall = no flux
+            if (!per_x && (i == 0 || i == nx)) { fx[i, j] = Real(0); return; }   // wall = no flux
             std::array<Real, 2 * R + 1> west{}, east{};                   // cells i-1, i
             for (int s2 = -R; s2 <= R; ++s2) {
-                west[s2 + R] = clamp_at(h, (i - 1) + s2, j, nx, ny);
-                east[s2 + R] = clamp_at(h,  i      + s2, j, nx, ny);
+                west[s2 + R] = bc_at(m, h, (i - 1) + s2, j);
+                east[s2 + R] = bc_at(m, h,  i      + s2, j);
             }
             const Real hR_west = Scheme::reconstruct(west).at_right();    // west cell's east edge
             const Real hL_east = Scheme::reconstruct(east).at_left();     // east cell's west edge
@@ -93,13 +97,14 @@ public:
             fx[i, j] = uu * hf * m.dy(Loc::XFace, i, j) * m.wet(Loc::XFace, i, j);
         });
 
-        // ── Pass 2: y-face mass flux. Interior faces j∈[1,ny-1]; walls j=0,ny → 0. ──
+        // ── Pass 2: y-face mass flux. wall-y: interior j∈[1,ny-1], walls j=0,ny→0.
+        //    periodic-y: all faces j∈[0,ny] via wrapped stencil. ──
         for_each_cell(nx, ny + 1, [=](Index i, Index j) {
-            if (j == 0 || j == ny) { fy[i, j] = Real(0); return; }
+            if (!per_y && (j == 0 || j == ny)) { fy[i, j] = Real(0); return; }
             std::array<Real, 2 * R + 1> south{}, north{};                 // cells j-1, j
             for (int s2 = -R; s2 <= R; ++s2) {
-                south[s2 + R] = clamp_at(h, i, (j - 1) + s2, nx, ny);
-                north[s2 + R] = clamp_at(h, i,  j      + s2, nx, ny);
+                south[s2 + R] = bc_at(m, h, i, (j - 1) + s2);
+                north[s2 + R] = bc_at(m, h, i,  j      + s2);
             }
             const Real hN_south = Scheme::reconstruct(south).at_right();  // south cell's north edge
             const Real hS_north = Scheme::reconstruct(north).at_left();   // north cell's south edge

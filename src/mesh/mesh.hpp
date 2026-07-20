@@ -71,4 +71,29 @@ concept Mesh = std::is_trivially_copyable_v<M> &&
     { m.edge(e) }             -> std::convertible_to<EdgeConn>;// topology (halo fill)
 };
 
+// ── Topology-aware neighbour indexing (ADR-7: "the mesh owns iteration") ─────────
+// An operator asks the mesh how to reach a neighbour instead of hardcoding i±1 and
+// a wall clamp. A Periodic edge wraps (mod n); a Wall edge clamps-to-edge (exactly
+// the old `clamp_at` — so wall runs are bit-identical). `s` is the signed offset;
+// the returned index is always in [0, n). This is THE seam that makes periodic-x
+// (the zonal-jet channel) a mesh property, not an operator branch. Fold is treated
+// as a wall here until the tripolar halo lands (documented gap).
+template <Mesh M> inline Index shift_x(const M& m, Index i, int s) {
+    const Index n = m.nx(); const Index k = i + s;
+    if (m.edge(Edge::West) == EdgeConn::Periodic) return (k % n + n) % n;
+    return k < 0 ? 0 : (k >= n ? n - 1 : k);
+}
+template <Mesh M> inline Index shift_y(const M& m, Index j, int t) {
+    const Index n = m.ny(); const Index k = j + t;
+    if (m.edge(Edge::South) == EdgeConn::Periodic) return (k % n + n) % n;
+    return k < 0 ? 0 : (k >= n ? n - 1 : k);
+}
+// Centre-field access honouring topology — supersedes clamp_at for h/tracer reads
+// whose stencil window overhangs the domain. Face fields (u,v) are indexed with
+// shift_x on their x-index directly; their staggered (wall) index keeps the stored
+// boundary value (0 at a wall), which a clamp would wrongly replicate.
+template <Mesh M> inline Real bc_at(const M& m, Field2 h, Index i, Index j) {
+    return h[shift_x(m, i, 0), shift_y(m, j, 0)];
+}
+
 } // namespace tc

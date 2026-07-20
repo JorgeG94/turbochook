@@ -48,14 +48,22 @@ public:
         const Field2 ku = k.u, kv = k.v;
         const Field2 q = q_, ke = ke_;
         const Index nx = m.nx(), ny = m.ny();
+        const bool per_x = (m.edge(Edge::West)  == EdgeConn::Periodic);
+        const bool per_y = (m.edge(Edge::South) == EdgeConn::Periodic);
         (void)p;
 
-        // ── Pass 1: ζ at corners (circulation / area). Outer corners → 0. ──
+        // ── Pass 1: ζ at corners (circulation / area). A WALL edge zeroes its outer
+        //    corners; a PERIODIC edge makes them interior wrap corners (shift_x reads
+        //    the opposite side). ──
         for_each_cell(m.extent_x(Loc::Corner), m.extent_y(Loc::Corner), [=](Index i, Index j) {
-            if (i < 1 || i > nx - 1 || j < 1 || j > ny - 1) { q[i, j] = Real(0); return; }
+            const bool bx = !per_x && (i < 1 || i > nx - 1);
+            const bool by = !per_y && (j < 1 || j > ny - 1);
+            if (bx || by) { q[i, j] = Real(0); return; }
             const Real circ =
-                (v[i, j] * m.dy(Loc::YFace, i, j) - v[i - 1, j] * m.dy(Loc::YFace, i - 1, j))     // ∂v/∂x
-              - (u[i, j] * m.dx(Loc::XFace, i, j) - u[i, j - 1] * m.dx(Loc::XFace, i, j - 1));     // ∂u/∂y
+                (v[shift_x(m, i, 0), j] * m.dy(Loc::YFace, i, j)
+               - v[shift_x(m, i - 1, 0), j] * m.dy(Loc::YFace, i - 1, j))                         // ∂v/∂x
+              - (u[shift_x(m, i, 0), j] * m.dx(Loc::XFace, i, j)
+               - u[shift_x(m, i, 0), j - 1] * m.dx(Loc::XFace, i, j - 1));                         // ∂u/∂y
             q[i, j] = circ / m.area(Loc::Corner, i, j);       // Adcroft reciprocal on land
         });
 
@@ -68,36 +76,39 @@ public:
             ke[i, j] = Real(0.25) * e / m.area(Loc::Center, i, j);
         });
 
-        // ── Pass 3a: du/dt at u-faces (interior i∈[1,nx-1]; walls untouched → 0). ──
+        // ── Pass 3a: du/dt at u-faces. wall-x untouched (→0); periodic-x computes
+        //    faces 0,nx identically (wrap), keeping the duplicated storage in sync. ──
         for_each_cell(nx + 1, ny, [=](Index i, Index j) {
-            if (i == 0 || i == nx) return;
-            // thickness-weighted v from the 4 v-faces around the u-point (h clamped in j)
-            const Real hSW = Real(0.5) * (clamp_at(h, i - 1, j - 1, nx, ny) + clamp_at(h, i - 1, j, nx, ny));
-            const Real hNW = Real(0.5) * (clamp_at(h, i - 1, j, nx, ny) + clamp_at(h, i - 1, j + 1, nx, ny));
-            const Real hSE = Real(0.5) * (clamp_at(h, i, j - 1, nx, ny) + clamp_at(h, i, j, nx, ny));
-            const Real hNE = Real(0.5) * (clamp_at(h, i, j, nx, ny) + clamp_at(h, i, j + 1, nx, ny));
-            const Real vh   = v[i - 1, j] * hSW + v[i - 1, j + 1] * hNW + v[i, j] * hSE + v[i, j + 1] * hNE;
+            if (!per_x && (i == 0 || i == nx)) return;
+            // thickness-weighted v from the 4 v-faces around the u-point (topology-aware)
+            const Real hSW = Real(0.5) * (bc_at(m, h, i - 1, j - 1) + bc_at(m, h, i - 1, j));
+            const Real hNW = Real(0.5) * (bc_at(m, h, i - 1, j)     + bc_at(m, h, i - 1, j + 1));
+            const Real hSE = Real(0.5) * (bc_at(m, h, i, j - 1)     + bc_at(m, h, i, j));
+            const Real hNE = Real(0.5) * (bc_at(m, h, i, j)         + bc_at(m, h, i, j + 1));
+            const Real vh   = v[shift_x(m, i - 1, 0), j] * hSW + v[shift_x(m, i - 1, 0), j + 1] * hNW
+                            + v[shift_x(m, i, 0),     j] * hSE + v[shift_x(m, i, 0),     j + 1] * hNE;
             const Real heff = hSW + hNW + hSE + hNE;
             const Real v_at_u = heff > Real(0) ? vh / heff : Real(0);
             const Real zeta = Real(0.5) * (q[i, j] + q[i, j + 1]);                              // S+N corners
             const Real fc   = Real(0.5) * (m.coriolis(Loc::Corner, i, j) + m.coriolis(Loc::Corner, i, j + 1));
-            const Real ke_gx = (ke[i, j] - ke[i - 1, j]) / m.dx(Loc::XFace, i, j);
+            const Real ke_gx = (bc_at(m, ke, i, j) - bc_at(m, ke, i - 1, j)) / m.dx(Loc::XFace, i, j);
             ku[i, j] += ((zeta + fc) * v_at_u - ke_gx) * m.wet(Loc::XFace, i, j);   // 0 across a coast face
         });
 
-        // ── Pass 3b: dv/dt at v-faces (interior j∈[1,ny-1]; walls untouched → 0). ──
+        // ── Pass 3b: dv/dt at v-faces. wall-y untouched (→0); periodic-y computes
+        //    faces 0,ny identically. ──
         for_each_cell(nx, ny + 1, [=](Index i, Index j) {
-            if (j == 0 || j == ny) return;
-            const Real hSW = Real(0.5) * (clamp_at(h, i - 1, j - 1, nx, ny) + clamp_at(h, i, j - 1, nx, ny));
-            const Real hSE = Real(0.5) * (clamp_at(h, i, j - 1, nx, ny) + clamp_at(h, i + 1, j - 1, nx, ny));
-            const Real hNW = Real(0.5) * (clamp_at(h, i - 1, j, nx, ny) + clamp_at(h, i, j, nx, ny));
-            const Real hNE = Real(0.5) * (clamp_at(h, i, j, nx, ny) + clamp_at(h, i + 1, j, nx, ny));
+            if (!per_y && (j == 0 || j == ny)) return;
+            const Real hSW = Real(0.5) * (bc_at(m, h, i - 1, j - 1) + bc_at(m, h, i, j - 1));
+            const Real hSE = Real(0.5) * (bc_at(m, h, i, j - 1)     + bc_at(m, h, i + 1, j - 1));
+            const Real hNW = Real(0.5) * (bc_at(m, h, i - 1, j)     + bc_at(m, h, i, j));
+            const Real hNE = Real(0.5) * (bc_at(m, h, i, j)         + bc_at(m, h, i + 1, j));
             const Real uh   = u[i, j - 1] * hSW + u[i + 1, j - 1] * hSE + u[i, j] * hNW + u[i + 1, j] * hNE;
             const Real heff = hSW + hSE + hNW + hNE;
             const Real u_at_v = heff > Real(0) ? uh / heff : Real(0);
             const Real zeta = Real(0.5) * (q[i, j] + q[i + 1, j]);                              // W+E corners
             const Real fc   = Real(0.5) * (m.coriolis(Loc::Corner, i, j) + m.coriolis(Loc::Corner, i + 1, j));
-            const Real ke_gy = (ke[i, j] - ke[i, j - 1]) / m.dy(Loc::YFace, i, j);
+            const Real ke_gy = (bc_at(m, ke, i, j) - bc_at(m, ke, i, j - 1)) / m.dy(Loc::YFace, i, j);
             kv[i, j] += (-(zeta + fc) * u_at_v - ke_gy) * m.wet(Loc::YFace, i, j);
         });
     }

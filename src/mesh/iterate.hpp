@@ -36,35 +36,49 @@ struct FaceView {
     Real  span;       // centre-to-centre distance (the gradient denominator)
 };
 
-// Interior x-faces (u-points with a centre cell on both sides): i ∈ [1, nx-1].
-// The boundary faces i=0,nx are the BC's job (wall = no normal flow, M2).
+// x-faces (u-points). Range and connectivity are TOPOLOGY-driven (ADR-7):
+//   • wall-x     → interior faces i ∈ [1, nx-1]; the wall faces 0,nx are the BC's
+//     job (no normal flow), left untouched → stay 0.
+//   • periodic-x → faces i ∈ [0, nx], with wrapped li/ri (shift_x). Faces 0 and nx
+//     are the SAME wrap face and get identical li=nx-1, ri=0 → whatever an operator
+//     writes to u[0] and u[nx] matches, so the duplicated storage stays in sync
+//     with no explicit halo copy.
 template <Mesh M, class F>
 void for_each_x_face(const M& mesh, F f) {
     const M m = mesh;                              // POD copy → capture by value, never `this`
     const Index nx = m.nx(), ny = m.ny();
-    const Index nif = nx - 1;                       // interior u-faces per row
+    const bool per = (m.edge(Edge::West) == EdgeConn::Periodic);
+    const Index i0 = per ? 0 : 1, i1 = per ? nx : nx - 1;   // inclusive face range
+    const Index nif = i1 - i0 + 1;
     if (nif <= 0) return;
     auto ids = std::views::iota(Index{0}, nif * ny);
     std::for_each(par, ids.begin(), ids.end(), [=](Index n) {
-        const Index i = 1 + n % nif;                // i ∈ [1, nx-1]
+        const Index i = i0 + n % nif;
         const Index j = n / nif;
-        f(FaceView{ .i = i, .j = j, .li = i - 1, .lj = j, .ri = i, .rj = j,
+        f(FaceView{ .i = i, .j = j,
+                    .li = shift_x(m, i - 1, 0), .lj = j,
+                    .ri = shift_x(m, i, 0),     .rj = j,
                     .span = m.dx(Loc::XFace, i, j) });
     });
 }
 
-// Interior y-faces (v-points): j ∈ [1, ny-1].
+// y-faces (v-points), the meridional mirror: wall-y → j ∈ [1, ny-1]; periodic-y →
+// j ∈ [0, ny] with wrapped lj/rj.
 template <Mesh M, class F>
 void for_each_y_face(const M& mesh, F f) {
     const M m = mesh;
     const Index nx = m.nx(), ny = m.ny();
-    const Index njf = ny - 1;                       // interior v-faces per column
+    const bool per = (m.edge(Edge::South) == EdgeConn::Periodic);
+    const Index j0 = per ? 0 : 1, j1 = per ? ny : ny - 1;
+    const Index njf = j1 - j0 + 1;
     if (njf <= 0) return;
     auto ids = std::views::iota(Index{0}, nx * njf);
     std::for_each(par, ids.begin(), ids.end(), [=](Index n) {
         const Index i = n % nx;
-        const Index j = 1 + n / nx;                 // j ∈ [1, ny-1]
-        f(FaceView{ .i = i, .j = j, .li = i, .lj = j - 1, .ri = i, .rj = j,
+        const Index j = j0 + n / nx;
+        f(FaceView{ .i = i, .j = j,
+                    .li = i, .lj = shift_y(m, j - 1, 0),
+                    .ri = i, .rj = shift_y(m, j, 0),
                     .span = m.dy(Loc::YFace, i, j) });
     });
 }
