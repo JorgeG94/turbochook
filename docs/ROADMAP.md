@@ -66,7 +66,8 @@ NUMERICAL eddies that masquerade as physical ones, so certify against that. A
 stacked-shallow-water **2-layer Phillips** model.
 
 - Second layer; per-layer thickness + the co-located tracer path (`SystemView<N>`, S/T at
-  centres); `PGF = gprime` (2-layer reduced gravity); barotropic/baroclinic split proper.
+  centres); `PGF = gprime` (2-layer reduced gravity). **Unsplit** stepper first (SSP-RK3);
+  the barotropic/baroclinic split is its own rung, M3.5.
 - **ALE-ready state (DESIGN ADR-6):** `h_layer` is the prognostic vertical variable (z
   diagnostic via `z_from_h`, no fixed levels); every operator takes arbitrary layer thickness
   and tolerates **vanishing layers** (`H_VANISHED` guard) from the start — no uniform-`dz`
@@ -75,7 +76,28 @@ stacked-shallow-water **2-layer Phillips** model.
 - Certify with a 2-layer baroclinic channel that spins up eddies.
 
 **Acceptance:** a baroclinic channel goes unstable and produces eddies at the right scale;
-energy/enstrophy behave; GPU-stable over a long run.
+energy/enstrophy behave; GPU-stable over a long run. ✅ **done (unsplit)** — the spherical
+two-layer `bc_inst` jet rolls up into eddies on the GPU.
+
+## M3.5 — Split-explicit time stepping (make long runs affordable) — DESIGN ADR-9
+
+Goal: stop paying the `~50×` surface-gravity-wave tax. Unsplit, `dt` is pinned by
+`c_ext ≈ 140 m/s`; the baroclinic eddies move at `c_int ≈ 2.7 m/s`. Subcycle the fast 2D
+barotropic mode so the expensive layered update takes a `~20–50×` larger `dt`. This is the
+north star ("split-explicit") and what makes a 300-day integration a routine job.
+
+- **Barotropic subcycler:** reuse the M2 2D `BaroState` solver as an `Integrator` sub-policy;
+  advance `(η, U, V)` `M ≈ 30–60` substeps per baroclinic step, forced by the vertically
+  integrated baroclinic RHS, with ROMS-style time-averaging weights.
+- **Coupling bookkeeping:** replace the layered depth-mean transport with the averaged
+  barotropic `(Ū, V̄)`; keep `Σₖ hₖ = H + η̄` (mass consistency); the baroclinic PGF excludes
+  the surface-`η` part carried by the barotropic mode (no double-count).
+- **`SplitExplicit<Baro, M>`** is an Integrator-axis policy — unsplit `SSPRK3` stays selectable.
+- Certify the two-layer baroclinic channel; **the split must reproduce the unsplit eddy field**
+  (minus fast transients) at a fraction of the wall time.
+
+**Acceptance:** split run reproduces the unsplit `bc_inst` statistics (eddy scale, growth,
+energy/mass) with `M`-fold fewer layered RHS evals and a measured `≥10×` speedup; GPU-stable.
 
 ## M4 — EOS + FV pressure gradient + a vertical coordinate
 
