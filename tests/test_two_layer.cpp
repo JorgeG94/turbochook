@@ -101,7 +101,7 @@ TEST_CASE("TwoLayer barotropic wave: ρ₁=ρ₂ ⇒ surface mode at √(g(H₁+
     const Index nx = 64, ny = 4;
     const Real dx = 10000.0, dy = 10000.0, g = 9.81, H1 = 200.0, H2 = 800.0, A = 0.5;
     const Real H = H1 + H2, PI = std::acos(Real(-1));
-    tc::CartesianMesh mesh(nx, ny, dx, dy);
+    tc::CartesianMesh mesh(nx, ny, dx, dy, /*f0*/0.0);
     const Real c = std::sqrt(g * H), L = Real(nx) * dx, kx = PI / L;
     const Real T = Real(2) * PI / (kx * c), dt = Real(0.35) * dx / c;
 
@@ -133,4 +133,55 @@ TEST_CASE("TwoLayer barotropic wave: ρ₁=ρ₂ ⇒ surface mode at √(g(H₁+
     }
     REQUIRE(t_cross > 0);
     CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.03));   // c = √(g(H₁+H₂))
+}
+
+TEST_CASE("TwoLayer baroclinic wave: internal mode at c' = √(g'·H₁H₂/(H₁+H₂))") {
+    const Index nx = 32, ny = 4;
+    const Real dx = 20000.0, dy = 20000.0, g = 9.81, H1 = 200.0, H2 = 800.0;
+    const Real rho1 = 1025.0, rho2 = 1027.0, A = 1.0;
+    const Real H = H1 + H2, PI = std::acos(Real(-1));
+    const Real eps = (rho2 - rho1) / rho1, gp = g * eps;            // reduced gravity g'
+    const Real cbc = std::sqrt(gp * H1 * H2 / H);                    // baroclinic speed (~1.75 m/s)
+    const Real R   = eps * H2 / H - Real(1);                         // baroclinic eigenvector η₂/η₁
+
+    tc::CartesianMesh mesh(nx, ny, dx, dy, /*f0*/0.0);   // no rotation → pure internal gravity wave
+    const Real L = Real(nx) * dx, kx = PI / L;
+    const Real T  = Real(2) * PI / (kx * cbc);                       // baroclinic period (~8.5 days)
+    const Real dt = Real(0.3) * dx / std::sqrt(g * H);              // dt limited by the BAROTROPIC CFL
+
+    tc::Arena arena(48u << 20);
+    tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dy, .dt = dt, .g = g, .H = H,
+                  .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
+    tc::TwoLayerPoC core(mesh, arena, p);
+    core.init();
+
+    // exact baroclinic eigenvector (η₂ = R·η₁, surface ≈ flat), at rest → pure internal mode
+    const tc::Field2 e0 = core.state().layer[0].eta, e1 = core.state().layer[1].eta;
+    fill_center(e0, mesh, [=](Index i, Index j) { return H1 + A * std::cos(kx * mesh.x(tc::Loc::Center, i, j)); });
+    fill_center(e1, mesh, [=](Index i, Index j) { return H2 + R * A * std::cos(kx * mesh.x(tc::Loc::Center, i, j)); });
+    for (int l = 0; l < 2; ++l) {
+        const tc::Field2 u = core.state().layer[l].u, v = core.state().layer[l].v;
+        tc::for_each_cell(mesh.extent_x(tc::Loc::XFace), mesh.extent_y(tc::Loc::XFace), [=](Index i, Index j) { u[i, j] = 0; });
+        tc::for_each_cell(mesh.extent_x(tc::Loc::YFace), mesh.extent_y(tc::Loc::YFace), [=](Index i, Index j) { v[i, j] = 0; });
+    }
+
+    // Project η₁ onto the m=1 basin mode cos(πx/L): orthogonal to m=3, so this
+    // isolates the gravest mode (a raw antinode probe beats m=1 against m=3, which —
+    // both being baroclinic — keeps the vertical ratio fixed but modulates the peak).
+    const Index aj = ny / 2;
+    auto mode1 = [&]() {
+        const tc::Field2 e = core.state().layer[0].eta;
+        Real a = 0;
+        for (Index i = 0; i < nx; ++i) a += (e[i, aj] - H1) * std::cos(kx * mesh.x(tc::Loc::Center, i, aj));
+        return a;
+    };
+    Real t_prev = 0, e_prev = mode1(), t_cross = -1;
+    for (int n = 1; n <= 8000; ++n) {
+        core.step();
+        const Real t = Real(n) * dt, e = mode1();
+        if (e < 0 && e_prev >= 0) { t_cross = t_prev + (t - t_prev) * e_prev / (e_prev - e); break; }
+        t_prev = t; e_prev = e;
+    }
+    REQUIRE(t_cross > 0);
+    CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.03));   // the SLOW internal-mode speed
 }
