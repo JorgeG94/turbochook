@@ -21,6 +21,8 @@
 // =============================================================================
 
 #include <functional>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -56,13 +58,22 @@ struct Registry {
     void field(Quantity q, int rank, std::function<void(const State&, const M&, Real*)> f) {
         fields.push_back({q, rank, std::move(f)});
     }
-    // TODO(M4): Real value(std::string_view sym, const State&, const M&) — name lookup
-    //           over `scalars` for the diagnostic("KE") / Python path.
+
+    // Evaluate the scalar diagnostic named `name` — the name-indexed path (the Reporter
+    // today, and later `tc_diagnostic(h,"KE")` from Python). Fail-loud on an unknown name:
+    // a misspelled diagnostic is a config error, not a silent NaN (error.hpp discipline).
+    Real value(std::string_view name, const State& s, const M& m) const {
+        for (const auto& d : scalars)
+            if (name == std::string_view(d.q.symbol)) return d.eval(s, m);
+        throw std::runtime_error(std::string("Registry: unknown scalar diagnostic '")
+                                 + std::string(name) + "'");
+    }
 };
 
-// TODO(M4): template <int NL, class M> Registry<LayeredState<NL>, M> default_diagnostics();
-//   scalars: Q_MASS → global_integral(m,[=]{ h[i,j] }); Q_KE → ∫½h|u|²; Q_SPEED → global_max.
-//   fields:  Q_H (identity), Q_U/Q_V (face→centre), Q_ZETA (corner curl → centre).
-//   Each authored with the reduce verb + integrand bound together (erase the outcome).
+// The authored default set — `default_diagnostics<NL,M>()` — lives in diag/diagnostics.hpp,
+// where the integrands (total_mass/total_ke/max_speed) already are. This header is the
+// physics-free MECHANISM (types + name lookup); the content is wired there.
+// TODO(M4): field diags (Q_H identity, Q_U/Q_V face→centre, Q_ZETA curl) + the OceanOutput
+//           rewire — the ≥1-D sink. Scalars land first (this pass); fields with that rewire.
 
 } // namespace tc

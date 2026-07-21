@@ -26,6 +26,7 @@
 #include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
 #include "diag/reduce.hpp"
+#include "diag/registry.hpp"
 
 namespace tc {
 
@@ -88,6 +89,22 @@ bool any_nonfinite(const BaroState& s, const M& m) {
     return field_nonfinite(s.eta, m.extent_x(Loc::Center), m.extent_y(Loc::Center))
         || field_nonfinite(s.u,   m.extent_x(Loc::XFace),  m.extent_y(Loc::XFace))
         || field_nonfinite(s.v,   m.extent_x(Loc::YFace),  m.extent_y(Loc::YFace));
+}
+
+// ── the default registry (DESIGN ADR-8 rev) ──────────────────────────────────────
+// Wire the catalog Quantities to the reductions above, erasing the OUTCOME (each eval
+// is a host closure that launches its device reduce internally — the integrand stays
+// monomorphic). This is the single source of truth for "what scalars a run reports":
+// the Reporter iterates it, and adding a scalar is one `reg.scalar(...)` line here (or
+// at the call site), not a new function threaded through the reporter.
+template <int NL, Mesh M>
+Registry<LayeredState<NL>, M> default_diagnostics() {
+    using State = LayeredState<NL>;
+    Registry<State, M> reg;
+    reg.scalar(Q_MASS,  [](const State& s, const M& m) { return total_mass(s, m); });
+    reg.scalar(Q_KE,    [](const State& s, const M& m) { return total_ke(s, m);   });
+    reg.scalar(Q_SPEED, [](const State& s, const M& m) { return max_speed(s, m);  });
+    return reg;
 }
 
 } // namespace tc

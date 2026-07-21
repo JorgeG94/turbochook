@@ -55,11 +55,14 @@ public:
     void report(const LayeredState<NL>& s, const M& mesh, Real day, Real dt, long step, Real total_days,
                 std::initializer_list<std::pair<const char*, Real>> tracers = {}) {
         if (!started_) start();
-        // device-offloading reductions — only the scalars cross to host (ADR-8), no
-        // full-state migration. Each is the SAME global reduce over a different integrand.
-        const Real mass  = total_mass(s, mesh);
-        const Real umax  = max_speed(s, mesh);
-        const Real ke    = total_ke(s, mesh);
+        // Raw scalars come from the REGISTRY (the single source of truth for "what a run
+        // reports"), by name. Each value() launches a device-offloading reduce — only the
+        // scalar crosses to host (ADR-8), no full-state migration. Built at cadence (cheap:
+        // a few std::functions); a caller that wants to customise the set can build its own.
+        const auto reg   = default_diagnostics<NL, M>();
+        const Real mass  = reg.value("mass",  s, mesh);
+        const Real umax  = reg.value("speed", s, mesh);
+        const Real ke    = reg.value("KE",    s, mesh);
         const Real dxmin = min_dx(mesh);
         if (first_) { mass0_ = mass; header(); }
 
