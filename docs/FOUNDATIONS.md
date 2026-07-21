@@ -9,27 +9,37 @@ stdlib gives us most of it (`std::format`/`std::print`, `std::expected`,
 
 `src/` holds all the sources, header-first (templated device code must be visible at the call
 site → mostly `.hpp`). Host-only pieces with global state or heavy includes may have a
-paired `.cpp`. No package manager, so there is no separate `app/` — thin `main`s are the
-top-level `src/*.cpp`, the library is the subdirectories.
+paired `.cpp`. The **library** is `src/` (the subdirectories); the thin program `main`s live
+in `examples/programs/` and link the library. No package manager, so no separate `app/`.
 
 ```
 turbochook/
-├── src/                          # all sources
-│   ├── m0_walking_skeleton.cpp   # a thin main (top-level *.cpp = an executable)
+├── src/                          # the LIBRARY (header-first; physics-free base + ocean modules)
 │   ├── core/                     # NUMERIC SUBSTRATE — zero physics; stdlib only.
 │   │   ├── types.hpp             # Real, Index, Field<Rank> = mdspan<layout_left>, aliases
 │   │   └── vec.hpp               # tc::Vec<N> — fixed-size numeric vector (glm-style; NOT std::vector/Eigen)
 │   ├── lib/                      # PLUMBING — physics-agnostic support; stdlib + core/.
-│   │   ├── log.hpp               # Logger (std::format/std::print), levels, global accessor
-│   │   ├── error.hpp             # Error + Errc + source_location (exceptions, host-only)
-│   │   ├── arena.hpp             # the memory arena (DESIGN ADR-3)
-│   │   ├── profiler.hpp          # nested-region wall-clock timing (self vs inclusive)
-│   │   └── (later)               # assert.hpp, mpi.hpp, gpu.hpp — assertions, MPI, CUDA/HIP wrappers
+│   │   ├── log.hpp / error.hpp / arena.hpp / profiler.hpp   # logging, errors, memory arena, timing
+│   │   ├── units.hpp / config.hpp / safe_math.hpp           # units/Dim, RunConfig, guarded math
+│   │   ├── checksums.hpp / mem_report.hpp                   # field digests, arena accounting  [stubs]
+│   │   └── (later)                                          # assert.hpp, mpi.hpp — assertions, MPI wrapper
 │   ├── mesh/                     # grid extents, metrics; ghost/halo is the TARGET (interior = [nghost, nghost+n)) — M2 is no-ghost interim, see DESIGN #3
-│   ├── physics/                  # ocean operator policies (continuity.hpp, coriolis.hpp, pgf.hpp; eos.hpp @ M4)
+│   ├── physics/                  # ocean operator policies, grouped BY ROLE:
+│   │   ├── state/                #   baro_state, layered_state            (the nouns / values)
+│   │   ├── continuity/           #   continuity (PPM flux), reconstruction (PCM…WENO)
+│   │   ├── momentum/             #   coriolis (Sadourny PV), pgf, two_layer_pgf, pgf_layered
+│   │   ├── tracer/               #   tracer advection, eos                [stubs → M4/Later]
+│   │   ├── vertical/             #   vcoord, remap (ALE), vmix            [stubs → M4/M5]
+│   │   ├── lateral/              #   dissipation (Shapiro/Leith), lateral_mix (GM/Redi)
+│   │   ├── forcing/              #   surface stress/flux, tides           [stub → Later]
+│   │   └── core/                 #   ocean_core, multilayer_core, split_two_layer, barotropic
 │   ├── numerics/                 # parallel.hpp (for_each_cell / for_each_face), integrator.hpp
-│   ├── bc/                       # boundary-condition policies
-│   └── io/                       # field dump, config parsing
+│   ├── diag/                     # reduce.hpp, quantity + registry (the Registry), report, diagnostics
+│   ├── bc/                       # boundary-condition policies (wall, periodic; fold/sponge/obc stubs)
+│   ├── io/                       # ocean_output (NetCDF), restart, netcdf wrapper
+│   └── api/                      # handle (ISolver), capi (extern "C")   [stubs → Later]
+├── examples/
+│   └── programs/                 # thin program mains — the executables (each links the library)
 ├── tests/                        # host-serial analytical tests (test_*.cpp)
 ├── docs/
 └── CMakeLists.txt
@@ -38,7 +48,7 @@ turbochook/
 - **Namespace:** a single flat `tc` namespace (short call sites — `tc::Continuity`, not
   `tc::physics::Continuity`). Directories organise files, not namespaces.
 - **Include path:** `src/` is on the include path → `#include "core/types.hpp"`,
-  `#include "lib/log.hpp"`, `#include "physics/coriolis.hpp"`. No deep `<turbochook/...>`
+  `#include "lib/log.hpp"`, `#include "physics/momentum/coriolis.hpp"`. No deep `<turbochook/...>`
   prefix for a standalone repo.
 - **Dependency rule:** `core/` (numeric types) depends on nothing but the stdlib; `lib/`
   (plumbing) depends on the stdlib and `core/`. Everything else depends on `core/` + `lib/`.

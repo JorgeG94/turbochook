@@ -32,9 +32,11 @@ the numeric substrate (`types.hpp` — `Real`, `Index`, `Field`, the mdspan seam
 and `src/lib/` is the physics-agnostic plumbing (`log.hpp`, `error.hpp`,
 `profiler.hpp`, `arena.hpp`; later `assert`, MPI and CUDA/HIP wrappers). `core/`
 depends on nothing but the stdlib; `lib/` depends on the stdlib and `core/`. Above
-them the header-first library: `src/mesh`, `src/physics`, `src/numerics`,
-`src/bc`, `src/io`. Thin `main`s are top-level `src/*.cpp` (no package manager, so
-no separate `app/`); host-serial tests in `tests/`. Single flat `tc` namespace;
+them the header-first library: `src/mesh`, `src/physics` (grouped by role:
+`state/ continuity/ momentum/ tracer/ vertical/ lateral/ forcing/ core/`),
+`src/numerics`, `src/diag`, `src/bc`, `src/io`, `src/api`. Thin program `main`s
+live in `examples/programs/` and link the library (no package manager, so no
+separate `app/`); host-serial tests in `tests/`. Single flat `tc` namespace;
 `src/` on the include path (`#include "lib/log.hpp"`, `#include "core/types.hpp"`).
 Full tree + the dependency rule in [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md).
 

@@ -205,5 +205,5 @@ are fatter (fewer, larger kernels), it should be less launch-bound — an intere
 #                          grid days              eps    dt   L   Δξ   M
 # Julia-faithful: ... 100000 0.006 0 100 100   (dt=0 → auto CFL, L=100, Δξ=100; needs 512²+ to roll up)
 ```
-Source of truth: `examples/programs/demo_baroclinic_split.cpp` (IC + params), `src/physics/split_two_layer.hpp`
-(split stepper), `src/physics/two_layer_pgf.hpp` (reduced-gravity PGF).
+Source of truth: `examples/programs/demo_baroclinic_split.cpp` (IC + params), `src/physics/core/split_two_layer.hpp`
+(split stepper), `src/physics/momentum/two_layer_pgf.hpp` (reduced-gravity PGF).

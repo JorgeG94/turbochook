@@ -35,18 +35,20 @@ src/mesh/     cartesian_mesh.hpp   CartesianMesh (uniform beta-plane)
               spherical_mesh.hpp   SphericalMesh (lat/lon, f=2Ω sinφ)
               masked_mesh.hpp      MaskedMesh (land/sea wet() mask)
               iterate.hpp          for_each_x_face / y_face (interior faces)
-src/physics/  reconstruction.hpp   PCM/PLM/PPM/PQM/WENO5/7/9 (Wall vs Face concepts)
-              baro_state.hpp       C-grid BaroState + Params (+H1,H2,rho1,rho2)
-              continuity.hpp       ContinuityFlux<Ppm>  (flux-form, telescoping)
-              coriolis.hpp         SadournyEnstrophy    (PV-flux, KE gradient)
-              pgf.hpp              FvPgf                 (single-layer -g∇η)
-              ocean_core.hpp       OceanCore<...>  → BarotropicPoC
-              layered_state.hpp    LayeredState<NL> = NL BaroStates  [M3]
-              two_layer_pgf.hpp    TwoLayerReducedGravityPgf (baroclinic coupling) [M3]
-              multilayer_core.hpp  TwoLayerCore<...> → TwoLayerPoC   [M3]
-src/bc/       bc.hpp         WallBC / PeriodicBC
-src/          demo_*.cpp     geostrophic / basin PPM-frame renderers
-tests/        test_*.cpp     43 doctest cases
+src/physics/  state/       baro_state (BaroState + Params), layered_state (LayeredState<NL>) [M3]
+              continuity/  continuity (ContinuityFlux<Ppm>, telescoping), reconstruction (PCM…WENO)
+              momentum/    coriolis (SadournyEnstrophy, PV+KE), pgf (FvPgf, −g∇η),
+                           two_layer_pgf (reduced-gravity coupling) [M3], pgf_layered [stub → M4]
+              vertical/    vcoord · remap · vmix            [stubs → M4/M5]
+              tracer/      tracer · eos                     [stubs → M4/Later]
+              lateral/     dissipation · lateral_mix        [stubs → M3.5/Later]
+              forcing/     forcing                          [stub → Later]
+              core/        ocean_core → BarotropicPoC, multilayer_core → TwoLayerPoC [M3],
+                           split_two_layer (SplitTwoLayerCore), barotropic (FB subcycler)
+src/diag/     reduce.hpp + quantity/registry (the Registry) + report (Reporter) + diagnostics
+src/bc/       bc.hpp  WallBC / PeriodicBC   (fold / sponge / obc stubs)
+examples/programs/  demo_* / m0_walking_skeleton / reco_demo   (thin mains, each links the lib)
+tests/        test_*.cpp     56 doctest cases
 ```
 
 ### Verified
@@ -95,7 +97,7 @@ tests/        test_*.cpp     43 doctest cases
    goes unstable: (a) 512² to resolve `Rd`; (b) a **scale-selective closure**
    (biharmonic / Leith) instead of uniform Shapiro, which diffuses the broad jet;
    (c) a less-diffusive continuity option at the deformation scale.
-2. **Factor dissipation into a tested module** (`src/physics/dissipation.hpp`): the
+2. **Factor dissipation into a tested module** (`src/physics/lateral/dissipation.hpp`): the
    Shapiro filter (currently inline in `demo_baroclinic`) + a Laplacian/Leith
    viscosity, each on its own policy axis, with unit tests.
 3. **`RunConfig` struct + presets** (code-first) for the bc_inst / eq-wave cases.

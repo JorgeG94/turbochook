@@ -141,7 +141,7 @@ policies the compiler inlines.**
 - **`#include` what you use** — every name a file names, it includes; don't lean on
   transitive includes.
 - **Include path is `src/`** → `#include "core/types.hpp"`, `#include "lib/log.hpp"`,
-  `#include "physics/coriolis.hpp"`. No `<turbochook/…>` prefix.
+  `#include "physics/momentum/coriolis.hpp"`. No `<turbochook/…>` prefix.
 - **Prefer stdlib algorithms that offload** — `<algorithm>`, `<numeric>`, `<execution>`,
   `<ranges>`, `<mdspan>`, `<array>` — over hand-rolled loops.
 - **Every header opens with a banner comment** stating what it is and *why it exists* (the

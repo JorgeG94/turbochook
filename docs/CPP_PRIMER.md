@@ -201,5 +201,5 @@ copy it to the device and run it unchanged.
 | `tc::par` policy + the `for_each_*` idioms | `src/numerics/parallel.hpp` |
 | The Arena (owner) that hands out views | `src/lib/arena.hpp` |
 | The `Mesh` concept + a model | `src/mesh/mesh.hpp`, `src/mesh/cartesian_mesh.hpp` |
-| A real kernel using all three | `src/physics/pgf.hpp` |
-| Sibling-concept design worked example | `src/physics/reconstruction.hpp` |
+| A real kernel using all three | `src/physics/momentum/pgf.hpp` |
+| Sibling-concept design worked example | `src/physics/continuity/reconstruction.hpp` |
