@@ -175,41 +175,140 @@ struct Ppm {                                   // piecewise parabolic, 3rd order
     }
 };
 
-struct Pqm {                                   // piecewise quartic, 5th order — seam
+// ── exact polynomial reconstruction from cell averages (shared by PQM + WENO) ─────
+// The unique degree-(K-1) polynomial whose average over cell j — the unit interval
+// [off0+j, off0+j+1] — equals s[j], returned as monomial coeffs on that same frame.
+// A fixed-size Gauss–Jordan solve (constexpr, device-inlinable). This is what makes
+// PQM's quartic and every WENO candidate EXACT for its degree: the values rakali
+// writes as hand-tuned constants, computed inline so there is nothing to mis-copy.
+// (Perf: the solve runs per cell; the coeffs are geometry-only and could be lifted to
+// constexpr tables later — correctness first. rki_kernel_remap.F90 / rki_ml_tracers*.)
+namespace detail {
+constexpr Real sq(Real x)   { return x * x; }
+constexpr Real aabs(Real x) { return x < Real(0) ? -x : x; }
+constexpr Real ipow(Real b, int e) { Real r = Real(1); for (int k = 0; k < e; ++k) r *= b; return r; }
+
+template <int K>
+constexpr std::array<Real, K> exact_poly(std::array<Real, K> s, int off0) {
+    std::array<std::array<Real, K>, K> A{};
+    std::array<Real, K> b = s;
+    for (int r = 0; r < K; ++r) {                        // A[r][c] = ∫_{o}^{o+1} ξ^c dξ, o = off0+r
+        const int o = off0 + r;
+        for (int c = 0; c < K; ++c)
+            A[r][c] = (ipow(Real(o + 1), c + 1) - ipow(Real(o), c + 1)) / Real(c + 1);
+    }
+    for (int k = 0; k < K; ++k) {                        // Gauss–Jordan, no pivot (A well-conditioned)
+        const Real piv = A[k][k];
+        for (int j = k; j < K; ++j) A[k][j] /= piv;
+        b[k] /= piv;
+        for (int r = 0; r < K; ++r) if (r != k) {
+            const Real f = A[r][k];
+            for (int j = k; j < K; ++j) A[r][j] -= f * A[k][j];
+            b[r] -= f * b[k];
+        }
+    }
+    return b;                                            // = polynomial coeffs on the [off0+j] frame
+}
+template <std::size_t K>                                  // size_t (not int) so K deduces from std::array
+constexpr Real poly_at(const std::array<Real, K>& a, Real x) {
+    Real acc = Real(0), xp = Real(1);
+    for (std::size_t c = 0; c < K; ++c) { acc += a[c] * xp; xp *= x; }
+    return acc;
+}
+// WENO-Z convex combine: αr = dr·(1 + (τ/(ε+βr))²), ω = α/Σα, value = Σ ωr·pr.
+template <int NC>
+constexpr Real weno_combine(const Real (&p)[NC], const Real (&beta)[NC], const Real (&d)[NC], Real tau) {
+    constexpr Real EPS = Real(1e-36);
+    Real a[NC]{}; Real asum = Real(0);
+    for (int r = 0; r < NC; ++r) { const Real t = tau / (EPS + beta[r]); a[r] = d[r] * (Real(1) + t * t); asum += a[r]; }
+    Real f = Real(0);
+    for (int r = 0; r < NC; ++r) f += a[r] / asum * p[r];
+    return f;
+}
+} // namespace detail
+
+struct Pqm {                                   // piecewise quartic, 5th order
     static constexpr ReconKind kind   = ReconKind::Wall;
     static constexpr int       radius = 3;
     static constexpr int       order  = 4;
-    // TODO(later): White–Adcroft edge values + edge slopes → quartic (two-pass).
+    // The exact degree-4 reconstruction from the 5 central cells (w[1..5], centre w[3]),
+    // in the centre cell's ξ∈[0,1] frame — mass-preserving (mean ≡ w[3]) by construction.
+    // A light extremum flatten (→ PCM at a local max/min) is the safety limiter; rakali's
+    // full column-coupled White–Adcroft IH4IH3 limiter is the REMAP-path variant (it
+    // solves a tridiagonal over the whole column — belongs in physics/vertical/remap.hpp,
+    // not this per-cell horizontal interface). (rki_kernel_remap.F90 remap_column_pqm.)
     static constexpr Poly<4> reconstruct(std::array<Real, 7> w) {
-        return {{w[3], Real(0), Real(0), Real(0), Real(0)}};
+        const Real hc = w[3];
+        if ((hc - w[2]) * (w[4] - hc) <= Real(0)) return {{ hc, 0, 0, 0, 0 }};   // extremum → flat
+        const std::array<Real, 5> a =
+            detail::exact_poly<5>({ w[1], w[2], w[3], w[4], w[5] }, -2);          // centre cell at [0,1]
+        return {{ a[0], a[1], a[2], a[3], a[4] }};
     }
 };
 
 // ── The face family (WENO — nonlinear pointwise; bodies are seams) ───────────────
 
-struct Weno5 {                                 // 5-point, 5th order — seam
+// WENO-Z (Borges 2008 τ-weights) over the classic Jiang–Shu (WENO5) / Balsara–Shu
+// (WENO7) smoothness indicators, with rakali's simplified 3-term β for WENO9. Each
+// candidate value is the EXACT reconstruction of the centre cell's downwind edge from
+// its k-cell sub-stencil (detail::exact_poly at ξ=1); the σ→0 point value of rakali's
+// swept-average face state. `Bias::Left` = the mirror (reverse the window, reconstruct
+// the right edge). (rki_ml_tracers_weno.F90 weno{5,7,9}_face_swept.)
+
+struct Weno5 {                                 // 5-point, 5th order — WENO-Z
     static constexpr ReconKind kind   = ReconKind::Face;
     static constexpr int       radius = 2;
-    // TODO(later): 3 candidate stencils, smoothness indicators βk, nonlinear
-    // weights → the biased face value. Positivity-preserving flavour (DESIGN §6).
-    static constexpr Real reconstruct(std::array<Real, 5> w, Bias b) {
-        (void)b; return w[radius];
+    static constexpr Real reconstruct(std::array<Real, 5> w, Bias bias) {
+        if (bias == Bias::Left) w = { w[4], w[3], w[2], w[1], w[0] };
+        Real p[3];
+        for (int r = 0; r < 3; ++r)
+            p[r] = detail::poly_at(detail::exact_poly<3>({ w[r], w[r+1], w[r+2] }, r - 2), Real(1));
+        const Real b[3] = {
+            Real(13)/12 * detail::sq(w[0] - 2*w[1] + w[2]) + Real(1)/4 * detail::sq(w[0] - 4*w[1] + 3*w[2]),
+            Real(13)/12 * detail::sq(w[1] - 2*w[2] + w[3]) + Real(1)/4 * detail::sq(w[1] - w[3]),
+            Real(13)/12 * detail::sq(w[2] - 2*w[3] + w[4]) + Real(1)/4 * detail::sq(3*w[2] - 4*w[3] + w[4]),
+        };
+        const Real d[3] = { Real(1)/10, Real(6)/10, Real(3)/10 };
+        return detail::weno_combine<3>(p, b, d, detail::aabs(b[0] - b[2]));
     }
 };
 
-struct Weno7 {                                 // 7-point, 7th order — seam
+struct Weno7 {                                 // 7-point, 7th order — WENO-Z
     static constexpr ReconKind kind   = ReconKind::Face;
     static constexpr int       radius = 3;
-    static constexpr Real reconstruct(std::array<Real, 7> w, Bias b) {
-        (void)b; return w[radius];
+    static constexpr Real reconstruct(std::array<Real, 7> w, Bias bias) {
+        if (bias == Bias::Left) w = { w[6], w[5], w[4], w[3], w[2], w[1], w[0] };
+        Real p[4];
+        for (int r = 0; r < 4; ++r)
+            p[r] = detail::poly_at(detail::exact_poly<4>({ w[r], w[r+1], w[r+2], w[r+3] }, r - 3), Real(1));
+        const Real b[4] = {   // Balsara–Shu (2000) smoothness indicators
+            w[0]*(547*w[0] - 3882*w[1] + 4642*w[2] - 1854*w[3]) + w[1]*(7043*w[1] - 17246*w[2] + 7042*w[3]) + w[2]*(11003*w[2] - 9402*w[3]) + 2107*detail::sq(w[3]),
+            w[1]*(267*w[1] - 1642*w[2] + 1602*w[3] - 494*w[4]) + w[2]*(2843*w[2] - 5966*w[3] + 1922*w[4]) + w[3]*(3443*w[3] - 2522*w[4]) + 547*detail::sq(w[4]),
+            w[2]*(547*w[2] - 2522*w[3] + 1922*w[4] - 494*w[5]) + w[3]*(3443*w[3] - 5966*w[4] + 1602*w[5]) + w[4]*(2843*w[4] - 1642*w[5]) + 267*detail::sq(w[5]),
+            w[3]*(2107*w[3] - 9402*w[4] + 7042*w[5] - 1854*w[6]) + w[4]*(11003*w[4] - 17246*w[5] + 4642*w[6]) + w[5]*(7043*w[5] - 3882*w[6]) + 547*detail::sq(w[6]),
+        };
+        const Real d[4] = { Real(1)/35, Real(12)/35, Real(18)/35, Real(4)/35 };
+        return detail::weno_combine<4>(p, b, d, detail::aabs(b[0] - b[3]));
     }
 };
 
-struct Weno9 {                                 // 9-point, 9th order — seam
+struct Weno9 {                                 // 9-point, 9th order — WENO-Z
     static constexpr ReconKind kind   = ReconKind::Face;
     static constexpr int       radius = 4;
-    static constexpr Real reconstruct(std::array<Real, 9> w, Bias b) {
-        (void)b; return w[radius];
+    static constexpr Real reconstruct(std::array<Real, 9> w, Bias bias) {
+        if (bias == Bias::Left) { std::array<Real, 9> r{}; for (int i = 0; i < 9; ++i) r[i] = w[8 - i]; w = r; }
+        Real p[5];
+        for (int r = 0; r < 5; ++r)
+            p[r] = detail::poly_at(detail::exact_poly<5>({ w[r], w[r+1], w[r+2], w[r+3], w[r+4] }, r - 4), Real(1));
+        Real b[5];            // rakali's simplified 3-term β, centred on w[r+2]
+        for (int r = 0; r < 5; ++r) {
+            const int c = r + 2;
+            b[r] = Real(13)/12 * detail::sq(w[c-1] - 2*w[c] + w[c+1])
+                 + Real(1)/4  * detail::sq(w[c-1] - w[c+1])
+                 + Real(1)/80 * detail::sq(w[c-2] - 4*w[c-1] + 6*w[c] - 4*w[c+1] + w[c+2]);
+        }
+        const Real d[5] = { Real(1)/126, Real(20)/126, Real(60)/126, Real(40)/126, Real(10)/126 };
+        return detail::weno_combine<5>(p, b, d, detail::aabs(b[0] - b[4]));
     }
 };
 
