@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/pgf.hpp — the pressure-gradient force operator (policy slot).
+// physics/momentum/pgf.hpp — the pressure-gradient force operator (policy slot).
 //
 //   ∂u/∂t += -g ∂η/∂x ,   ∂v/∂t += -g ∂η/∂y      (barotropic; on faces)
 //
@@ -14,7 +14,7 @@
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "mesh/iterate.hpp"
-#include "physics/baro_state.hpp"
+#include "physics/state/baro_state.hpp"
 
 namespace tc {
 

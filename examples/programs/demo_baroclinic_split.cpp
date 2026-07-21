@@ -1,5 +1,5 @@
 // =============================================================================
-// src/demo_baroclinic.cpp — TWO-LAYER BAROCLINIC INSTABILITY (the north star).
+// examples/programs/demo_baroclinic_split.cpp — TWO-LAYER BAROCLINIC INSTABILITY (the north star).
 // A high-latitude zonal jet in geostrophic balance goes unstable and rolls up into
 // eddies — emulating two_layer_sw's bc_inst case. Spherical band at 59.25°N,
 // periodic-x / wall-y, reduced-gravity two-layer, SSP-RK3, with a Shapiro filter to
@@ -25,12 +25,13 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/spherical_mesh.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/layered_state.hpp"
 #include "diag/report.hpp"
 #ifdef TC_HAVE_NETCDF
 #include "io/ocean_output.hpp"
 #endif
-#include "physics/multilayer_core.hpp"
+#include "physics/core/multilayer_core.hpp"
+#include "physics/core/split_two_layer.hpp"
 
 using tc::Real;
 using tc::Index;
@@ -94,8 +95,10 @@ int main(int argc, char** argv) {
     tc::Arena arena(std::size_t(N) * N * 3 * 8 * 24 + (64u << 20));
     tc::Params p{ .nx = N, .ny = N, .dx = dxmin, .dy = mesh.dy(Loc::Center, 0, 0), .dt = dt,
                   .g = g, .H = H1 + H2, .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
-    tc::TwoLayerCore<tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
-                     tc::TwoLayerReducedGravityPgf, tc::WallBC, tc::SSPRK3> core(mesh, arena, p);
+    constexpr int Msub = 24;                                  // template default (compile-time)
+    const int Msub_cli = argc > 9 ? std::atoi(argv[9]) : Msub; // arg9: runtime barotropic substeps
+    tc::SplitTwoLayerCore<tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                          tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p, Msub_cli);
     core.init();
     tc::Field2 tmp = arena.alloc2d(N, N);                            // Shapiro scratch
 
@@ -137,7 +140,7 @@ int main(int argc, char** argv) {
     });
     tc::for_each_cell(mesh.extent_x(Loc::YFace), mesh.extent_y(Loc::YFace), [=](Index i, Index j) { v1[i, j] = 0; v2[i, j] = 0; });
 
-    std::fprintf(stderr, "bc_inst: %dx%d  dt=%.2fs (CFL=%.2f)  %d steps (%.0f days)  Ld=%.1fkm nmx=%d cint=%.2f eps=%.3f\n",
+    std::fprintf(stderr, "SPLIT bc_inst: %dx%d  dt=%.2fs (CFL=%.2f)  %d steps (%.0f days)  Ld=%.1fkm nmx=%d cint=%.2f eps=%.3f\n",
                  int(N), int(N), double(dt), double(cfl), nsteps, double(days), double(Ld / 1000), nmx, double(cint), double(eps_shapiro));
 
     const int ppx = std::max(1, 512 / int(N));

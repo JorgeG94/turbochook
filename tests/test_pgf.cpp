@@ -12,8 +12,8 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/pgf.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/momentum/pgf.hpp"
 
 namespace {
 void zero_field(tc::Field2 f, tc::Index nx, tc::Index ny) {

@@ -16,7 +16,7 @@
 #include "io/ocean_output.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
 
 TEST_CASE("netcdf: RAII define/write/read round-trip, layout-preserving") {

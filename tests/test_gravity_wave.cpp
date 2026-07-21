@@ -20,7 +20,7 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/ocean_core.hpp"
+#include "physics/core/ocean_core.hpp"
 #include "diag/diagnostics.hpp"
 
 using tc::Real;

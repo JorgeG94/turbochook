@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/coriolis.hpp — the Coriolis operator (a compile-time policy slot).
+// physics/momentum/coriolis.hpp — the Coriolis operator (a compile-time policy slot).
 //
 //   ∂u/∂t += (f v)|u ,   ∂v/∂t += -(f u)|v      (plus the momentum advection)
 //
@@ -15,7 +15,7 @@
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
+#include "physics/state/baro_state.hpp"
 #include "numerics/parallel.hpp"
 
 namespace tc {

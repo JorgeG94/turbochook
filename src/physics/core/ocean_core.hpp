@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/ocean_core.hpp — the composed solver (the god-state that owns every
+// physics/core/ocean_core.hpp — the composed solver (the god-state that owns every
 // operator slot).
 //
 // This is where the compile-time policy axes come together. `OceanCore` is
@@ -24,10 +24,10 @@
 #include "lib/log.hpp"
 #include "lib/profiler.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/pgf.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/pgf.hpp"
 #include "bc/bc.hpp"
 #include "numerics/integrator.hpp"
 

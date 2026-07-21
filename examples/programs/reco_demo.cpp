@@ -1,4 +1,4 @@
-// src/reco_demo.cpp — dummy-but-real usage of the reconstruction policy axis.
+// examples/programs/reco_demo.cpp — dummy-but-real usage of the reconstruction policy axis.
 // A top-level src/*.cpp, so it builds as its own executable in every config; run
 // the host build with `./build-host/reco_demo`.
 //
@@ -11,7 +11,7 @@
 #include <vector>
 #include <cstdio>
 
-#include "physics/reconstruction.hpp"   // brings in core/types.hpp (tc::Real) too
+#include "physics/continuity/reconstruction.hpp"   // brings in core/types.hpp (tc::Real) too
 
 // ── A generic flux assembly over a WALL reconstruction ───────────────────────────
 // Constant advection with u > 0, so the upwind cell of each face is its LEFT

@@ -19,7 +19,7 @@
 #include <utility>
 #include "core/types.hpp"
 #include "mesh/mesh.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/layered_state.hpp"
 #include "diag/diagnostics.hpp"
 
 namespace tc {

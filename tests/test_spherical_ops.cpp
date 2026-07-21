@@ -17,11 +17,11 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/spherical_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/ocean_core.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/pgf.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/core/ocean_core.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/pgf.hpp"
 #include "diag/diagnostics.hpp"
 
 using tc::Real;

@@ -1,5 +1,5 @@
 // =============================================================================
-// src/m0_walking_skeleton.cpp — Milestone 0: prove the toolchain BEFORE physics.
+// examples/programs/m0_walking_skeleton.cpp — Milestone 0: prove the toolchain BEFORE physics.
 //
 // What this exercises (ROADMAP M0):
 //   • the tc::par execution-policy seam + for_each_index  (does it offload?)
@@ -22,7 +22,7 @@
 #include "lib/profiler.hpp"
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
-#include "physics/ocean_core.hpp"
+#include "physics/core/ocean_core.hpp"
 
 int main() try {
     tc::logger().set_level(tc::LogLevel::info);

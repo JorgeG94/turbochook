@@ -9,7 +9,7 @@
 #include <doctest/doctest.h>
 #include <array>
 #include "core/types.hpp"
-#include "physics/reconstruction.hpp"
+#include "physics/continuity/reconstruction.hpp"
 
 using tc::Real;
 

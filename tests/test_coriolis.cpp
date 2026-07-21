@@ -15,9 +15,9 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/pgf.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/pgf.hpp"
 
 using tc::Real;
 using tc::Index;

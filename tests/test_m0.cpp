@@ -20,8 +20,8 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/ocean_core.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/core/ocean_core.hpp"
 
 TEST_CASE("Arena hands out usable layout_left Field views") {
     tc::Arena arena(1u << 20);              // 1 MiB

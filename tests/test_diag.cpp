@@ -9,7 +9,7 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
+#include "physics/state/baro_state.hpp"
 #include "diag/diagnostics.hpp"
 
 TEST_CASE("total_mass = Σ η·area for a uniform free surface") {

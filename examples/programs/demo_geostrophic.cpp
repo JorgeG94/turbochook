@@ -1,5 +1,5 @@
 // =============================================================================
-// src/demo_geostrophic.cpp — a visual demo of the barotropic core: GEOSTROPHIC
+// examples/programs/demo_geostrophic.cpp — a visual demo of the barotropic core: GEOSTROPHIC
 // ADJUSTMENT on an f-plane. An initial Gaussian sea-surface bump collapses; the
 // unbalanced part radiates away as inertia-gravity waves while the rest settles
 // into a rotating, geostrophically balanced vortex. Renders the η anomaly to PPM
@@ -21,7 +21,7 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/ocean_core.hpp"
+#include "physics/core/ocean_core.hpp"
 
 namespace {
 // Diverging colormap: v∈[-1,1] → blue (−) · white (0) · red (+).

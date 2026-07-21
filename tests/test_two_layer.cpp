@@ -13,12 +13,12 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/layered_state.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/two_layer_pgf.hpp"
-#include "physics/multilayer_core.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/state/layered_state.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/two_layer_pgf.hpp"
+#include "physics/core/multilayer_core.hpp"
 
 using tc::Real;
 using tc::Index;

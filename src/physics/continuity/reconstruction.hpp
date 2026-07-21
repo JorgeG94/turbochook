@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/reconstruction.hpp — the reconstruction policy axis.
+// physics/continuity/reconstruction.hpp — the reconstruction policy axis.
 //
 // The payoff of compile-time policies: ONE generic flux/advection kernel,
 // templated over HOW it reconstructs the sub-cell profile — each scheme a policy

@@ -1,5 +1,5 @@
 // =============================================================================
-// src/demo_basin.cpp — geostrophic adjustment in a CIRCULAR BASIN with the
+// examples/programs/demo_basin.cpp — geostrophic adjustment in a CIRCULAR BASIN with the
 // perturbation at the coast. Exercises land/sea masking (MaskedMesh): the ocean is
 // a disc, land outside; a Gaussian bump sits near the edge, collapses, and the
 // waves radiate and curve around the circular coastline while rotation traps a
@@ -19,7 +19,7 @@
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "mesh/masked_mesh.hpp"
-#include "physics/ocean_core.hpp"
+#include "physics/core/ocean_core.hpp"
 
 namespace {
 void colormap(tc::Real v, unsigned char& r, unsigned char& g, unsigned char& b) {

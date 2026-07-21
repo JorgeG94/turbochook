@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/two_layer_pgf.hpp — reduced-gravity pressure gradient (2 layers). THE
+// physics/momentum/two_layer_pgf.hpp — reduced-gravity pressure gradient (2 layers). THE
 // baroclinic coupling — the interface between the layers drives the vertical
 // shear that feeds baroclinic instability. A model on the PGF axis (the header of
 // pgf.hpp always listed "gprime 2-layer reduced gravity, arrives M3").
@@ -16,7 +16,7 @@
 #include "core/types.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "mesh/iterate.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/layered_state.hpp"
 
 namespace tc {
 

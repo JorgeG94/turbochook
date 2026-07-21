@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/split_two_layer.hpp — SPLIT-EXPLICIT two-layer core (M3.5, DESIGN ADR-9),
+// physics/core/split_two_layer.hpp — SPLIT-EXPLICIT two-layer core (M3.5, DESIGN ADR-9),
 // the rakali run_stage_split flow. Per baroclinic step Δt:
 //   1. entry barotropic state (η=Σₖhₖ, U=depth-mean); save U at entry (ubt_n).
 //   2. slow momentum tendencies: per-layer Coriolis+adv (kcor) + 2-layer PGF (kpgf).
@@ -22,12 +22,12 @@
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/layered_state.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/pgf.hpp"
-#include "physics/two_layer_pgf.hpp"
-#include "physics/barotropic.hpp"
+#include "physics/state/layered_state.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/pgf.hpp"
+#include "physics/momentum/two_layer_pgf.hpp"
+#include "physics/core/barotropic.hpp"
 #include "bc/bc.hpp"
 #include "numerics/parallel.hpp"
 #include "numerics/split_explicit.hpp"

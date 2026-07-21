@@ -12,9 +12,9 @@
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/layered_state.hpp"
 #include "numerics/split_explicit.hpp"
-#include "physics/split_two_layer.hpp"
+#include "physics/core/split_two_layer.hpp"
 
 using tc::Real;
 using tc::Index;

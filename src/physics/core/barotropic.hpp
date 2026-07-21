@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/barotropic.hpp — the 2D barotropic Forward-Backward Euler sub-solver
+// physics/core/barotropic.hpp — the 2D barotropic Forward-Backward Euler sub-solver
 // (DESIGN ADR-9, ported from rakali_dc `rki_barotropic_substep.F90`). This is the
 // FAST-MODE engine that the split-explicit stepper subcycles.
 //
@@ -23,10 +23,10 @@
 
 #include "core/types.hpp"
 #include "lib/arena.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/pgf.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/pgf.hpp"
 #include "numerics/parallel.hpp"
 
 namespace tc {

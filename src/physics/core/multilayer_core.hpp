@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/multilayer_core.hpp — the two-layer composed solver (M3).
+// physics/core/multilayer_core.hpp — the two-layer composed solver (M3).
 //
 // The god-state for a stacked two-layer C-grid. The structure that makes it
 // baroclinic: continuity and Coriolis run PER LAYER (reusing the single-layer
@@ -18,10 +18,10 @@
 #include "lib/arena.hpp"
 #include "lib/log.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/layered_state.hpp"
-#include "physics/continuity.hpp"
-#include "physics/coriolis.hpp"
-#include "physics/two_layer_pgf.hpp"
+#include "physics/state/layered_state.hpp"
+#include "physics/continuity/continuity.hpp"
+#include "physics/momentum/coriolis.hpp"
+#include "physics/momentum/two_layer_pgf.hpp"
 #include "bc/bc.hpp"
 #include "numerics/integrator.hpp"
 

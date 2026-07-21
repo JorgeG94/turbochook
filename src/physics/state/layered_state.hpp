@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/layered_state.hpp — a stacked N-layer state (M3).
+// physics/state/layered_state.hpp — a stacked N-layer state (M3).
 //
 // A LayeredState<NL> is just NL BaroStates (one C-grid (h,u,v) per layer). This
 // deliberately REUSES the single-layer machinery: the per-layer continuity and
@@ -11,7 +11,7 @@
 // =============================================================================
 
 #include <array>
-#include "physics/baro_state.hpp"
+#include "physics/state/baro_state.hpp"
 
 namespace tc {
 

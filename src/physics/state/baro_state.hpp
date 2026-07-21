@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/baro_state.hpp — the Arakawa C-grid barotropic state + run params.
+// physics/state/baro_state.hpp — the Arakawa C-grid barotropic state + run params.
 //
 // This is the DATA the whole M2 solver pushes around. On a C-grid the pieces of
 // state live on DIFFERENT, staggered sub-grids — that's the defining feature of

@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// physics/continuity.hpp — the thickness/continuity operator.
+// physics/continuity/continuity.hpp — the thickness/continuity operator.
 //
 // Pattern (DESIGN §6b): "a physics module is a CLASS that (a) owns its arena-
 // backed workspace and (b) satisfies a per-module concept." Each scheme variant
@@ -22,8 +22,8 @@
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "mesh/cartesian_mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/reconstruction.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/continuity/reconstruction.hpp"
 #include "numerics/parallel.hpp"
 
 namespace tc {

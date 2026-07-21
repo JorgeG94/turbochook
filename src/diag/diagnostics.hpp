@@ -22,8 +22,8 @@
 #include <functional>
 #include "core/types.hpp"
 #include "mesh/mesh.hpp"
-#include "physics/baro_state.hpp"
-#include "physics/layered_state.hpp"
+#include "physics/state/baro_state.hpp"
+#include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
 #include "diag/reduce.hpp"
 

@@ -86,12 +86,19 @@ endif()
 message(STATUS "TurboChook stdpar backend : ${TC_STDPAR}")
 message(STATUS "TurboChook compiler       : ${CMAKE_CXX_COMPILER_ID}")
 
-# ── the library (header-only for now; becomes STATIC when .cpp TUs appear) ────
-add_library(turbochook INTERFACE)
-target_link_libraries(turbochook INTERFACE tc_flags)
+# ── the library: header-only until subdir .cpp TUs appear, then STATIC ────────
+# Lib sources are src/<subdir>/*.cpp (the thin program mains live in examples/programs/).
+file(GLOB TC_LIB_SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*/*.cpp)
+if(TC_LIB_SRC)
+  add_library(turbochook STATIC ${TC_LIB_SRC})
+  target_link_libraries(turbochook PUBLIC tc_flags)
+else()
+  add_library(turbochook INTERFACE)
+  target_link_libraries(turbochook INTERFACE tc_flags)
+endif()
 
-# ── executables (top-level src/*.cpp are the thin mains; subdir *.hpp is the lib)
-file(GLOB TC_APPS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
+# ── example programs (examples/programs/*.cpp are the thin mains; each links the lib)
+file(GLOB TC_APPS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/examples/programs/*.cpp)
 foreach(src ${TC_APPS})
   get_filename_component(name ${src} NAME_WE)
   add_executable(${name} ${src})
