@@ -177,43 +177,70 @@ struct Ppm {                                   // piecewise parabolic, 3rd order
 
 // ── exact polynomial reconstruction from cell averages (shared by PQM + WENO) ─────
 // The unique degree-(K-1) polynomial whose average over cell j — the unit interval
-// [off0+j, off0+j+1] — equals s[j], returned as monomial coeffs on that same frame.
-// A fixed-size Gauss–Jordan solve (constexpr, device-inlinable). This is what makes
-// PQM's quartic and every WENO candidate EXACT for its degree: the values rakali
-// writes as hand-tuned constants, computed inline so there is nothing to mis-copy.
-// (Perf: the solve runs per cell; the coeffs are geometry-only and could be lifted to
-// constexpr tables later — correctness first. rki_kernel_remap.F90 / rki_ml_tracers*.)
+// [off0+j, off0+j+1] — equals s[j]. KEY POINT: the moment matrix A depends only on the
+// stencil GEOMETRY (off0), not the data — so the reconstruction is a LINEAR map a=A⁻¹·s.
+// We solve A (Gauss–Jordan) at COMPILE TIME to bake A⁻¹ / the face-value weight vectors —
+// literally the constants rakali hand-tunes — and leave only a dot product at runtime.
+// (A compile-time zero pivot would be a constexpr divide-by-zero = a hard build error, not
+// UB, so the solve is self-checking. rki_kernel_remap.F90 / rki_ml_tracers_weno.F90.)
 namespace detail {
 constexpr Real sq(Real x)   { return x * x; }
 constexpr Real aabs(Real x) { return x < Real(0) ? -x : x; }
 constexpr Real ipow(Real b, int e) { Real r = Real(1); for (int k = 0; k < e; ++k) r *= b; return r; }
 
+// A[r][c] = ∫_{off0+r}^{off0+r+1} ξ^c dξ — geometry only, no data.
 template <int K>
-constexpr std::array<Real, K> exact_poly(std::array<Real, K> s, int off0) {
+constexpr std::array<std::array<Real, K>, K> moment_matrix(int off0) {
     std::array<std::array<Real, K>, K> A{};
-    std::array<Real, K> b = s;
-    for (int r = 0; r < K; ++r) {                        // A[r][c] = ∫_{o}^{o+1} ξ^c dξ, o = off0+r
-        const int o = off0 + r;
-        for (int c = 0; c < K; ++c)
-            A[r][c] = (ipow(Real(o + 1), c + 1) - ipow(Real(o), c + 1)) / Real(c + 1);
+    for (int r = 0; r < K; ++r) { const int o = off0 + r;
+        for (int c = 0; c < K; ++c) A[r][c] = (ipow(Real(o + 1), c + 1) - ipow(Real(o), c + 1)) / Real(c + 1);
     }
-    for (int k = 0; k < K; ++k) {                        // Gauss–Jordan, no pivot (A well-conditioned)
-        const Real piv = A[k][k];
-        for (int j = k; j < K; ++j) A[k][j] /= piv;
-        b[k] /= piv;
-        for (int r = 0; r < K; ++r) if (r != k) {
-            const Real f = A[r][k];
-            for (int j = k; j < K; ++j) A[r][j] -= f * A[k][j];
-            b[r] -= f * b[k];
+    return A;
+}
+// Gauss–Jordan solve M·x = rhs (no pivot; M is a well-conditioned moment matrix).
+template <int K>
+constexpr std::array<Real, K> gj_solve(std::array<std::array<Real, K>, K> M, std::array<Real, K> rhs) {
+    for (int k = 0; k < K; ++k) {
+        const Real piv = M[k][k];
+        for (int j = k; j < K; ++j) M[k][j] /= piv;
+        rhs[k] /= piv;
+        for (int r = 0; r < K; ++r) if (r != k) { const Real f = M[r][k];
+            for (int j = k; j < K; ++j) M[r][j] -= f * M[k][j];
+            rhs[r] -= f * rhs[k];
         }
     }
-    return b;                                            // = polynomial coeffs on the [off0+j] frame
+    return rhs;
 }
-template <std::size_t K>                                  // size_t (not int) so K deduces from std::array
-constexpr Real poly_at(const std::array<Real, K>& a, Real x) {
-    Real acc = Real(0), xp = Real(1);
-    for (std::size_t c = 0; c < K; ++c) { acc += a[c] * xp; xp *= x; }
-    return acc;
+// The K weights c with cᵀ·s = the exact reconstruction evaluated at x. Since a value
+// v(x)=xvecᵀ·a=xvecᵀ·A⁻¹·s=(A⁻ᵀ·xvec)ᵀ·s, we have c=A⁻ᵀ·xvec ⇒ solve Aᵀ c = xvec.
+template <int K>
+constexpr std::array<Real, K> face_weights(int off0, Real x) {
+    const auto A = moment_matrix<K>(off0);
+    std::array<std::array<Real, K>, K> At{};
+    for (int i = 0; i < K; ++i) for (int j = 0; j < K; ++j) At[i][j] = A[j][i];
+    std::array<Real, K> xv{}; Real xp = Real(1);
+    for (int c = 0; c < K; ++c) { xv[c] = xp; xp *= x; }
+    return gj_solve<K>(At, xv);
+}
+// The K WENO candidate weight-rows: candidate r reconstructs the centre cell's right
+// edge (x=1) from its K-cell sub-stencil (off0 = r-(K-1)). A K×K table — geometry only.
+template <int K>
+constexpr std::array<std::array<Real, K>, K> weno_weight_table() {
+    std::array<std::array<Real, K>, K> C{};
+    for (int r = 0; r < K; ++r) C[r] = face_weights<K>(r - (K - 1), Real(1));
+    return C;
+}
+// A⁻¹ (geometry only) — the full-poly reconstruction PQM needs: coeffs a = A⁻¹·s.
+template <int K>
+constexpr std::array<std::array<Real, K>, K> inv_moment(int off0) {
+    const auto A = moment_matrix<K>(off0);
+    std::array<std::array<Real, K>, K> inv{};
+    for (int col = 0; col < K; ++col) {
+        std::array<Real, K> e{}; e[col] = Real(1);
+        const auto x = gj_solve<K>(A, e);                // A·x = e_col ⇒ x = col of A⁻¹
+        for (int r = 0; r < K; ++r) inv[r][col] = x[r];
+    }
+    return inv;
 }
 // WENO-Z convex combine: αr = dr·(1 + (τ/(ε+βr))²), ω = α/Σα, value = Σ ωr·pr.
 template <int NC>
@@ -240,8 +267,11 @@ struct Pqm {                                   // piecewise quartic, 5th order
     static constexpr Poly<4> reconstruct(std::array<Real, 7> w) {
         const Real hc = w[3];
         if ((hc - w[2]) * (w[4] - hc) <= Real(0)) return {{ hc, 0, 0, 0, 0 }};   // extremum → flat
-        const std::array<Real, 5> a =
-            detail::exact_poly<5>({ w[1], w[2], w[3], w[4], w[5] }, -2);          // centre cell at [0,1]
+        constexpr auto Ainv = detail::inv_moment<5>(-2);         // A⁻¹ baked at COMPILE time
+        const std::array<Real, 5> s{ w[1], w[2], w[3], w[4], w[5] };
+        std::array<Real, 5> a{};                                 // runtime: a = A⁻¹·s (a matrix-vector, no solve)
+        for (int i = 0; i < 5; ++i) { Real acc = Real(0);
+            for (int j = 0; j < 5; ++j) acc += Ainv[i][j] * s[j]; a[i] = acc; }
         return {{ a[0], a[1], a[2], a[3], a[4] }};
     }
 };
@@ -260,9 +290,9 @@ struct Weno5 {                                 // 5-point, 5th order — WENO-Z
     static constexpr int       radius = 2;
     static constexpr Real reconstruct(std::array<Real, 5> w, Bias bias) {
         if (bias == Bias::Left) w = { w[4], w[3], w[2], w[1], w[0] };
+        constexpr auto C = detail::weno_weight_table<3>();       // candidate coeffs, baked at COMPILE time
         Real p[3];
-        for (int r = 0; r < 3; ++r)
-            p[r] = detail::poly_at(detail::exact_poly<3>({ w[r], w[r+1], w[r+2] }, r - 2), Real(1));
+        for (int r = 0; r < 3; ++r) p[r] = C[r][0]*w[r] + C[r][1]*w[r+1] + C[r][2]*w[r+2];
         const Real b[3] = {
             Real(13)/12 * detail::sq(w[0] - 2*w[1] + w[2]) + Real(1)/4 * detail::sq(w[0] - 4*w[1] + 3*w[2]),
             Real(13)/12 * detail::sq(w[1] - 2*w[2] + w[3]) + Real(1)/4 * detail::sq(w[1] - w[3]),
@@ -278,9 +308,9 @@ struct Weno7 {                                 // 7-point, 7th order — WENO-Z
     static constexpr int       radius = 3;
     static constexpr Real reconstruct(std::array<Real, 7> w, Bias bias) {
         if (bias == Bias::Left) w = { w[6], w[5], w[4], w[3], w[2], w[1], w[0] };
+        constexpr auto C = detail::weno_weight_table<4>();       // candidate coeffs, baked at COMPILE time
         Real p[4];
-        for (int r = 0; r < 4; ++r)
-            p[r] = detail::poly_at(detail::exact_poly<4>({ w[r], w[r+1], w[r+2], w[r+3] }, r - 3), Real(1));
+        for (int r = 0; r < 4; ++r) { Real acc = Real(0); for (int j = 0; j < 4; ++j) acc += C[r][j]*w[r+j]; p[r] = acc; }
         const Real b[4] = {   // Balsara–Shu (2000) smoothness indicators
             w[0]*(547*w[0] - 3882*w[1] + 4642*w[2] - 1854*w[3]) + w[1]*(7043*w[1] - 17246*w[2] + 7042*w[3]) + w[2]*(11003*w[2] - 9402*w[3]) + 2107*detail::sq(w[3]),
             w[1]*(267*w[1] - 1642*w[2] + 1602*w[3] - 494*w[4]) + w[2]*(2843*w[2] - 5966*w[3] + 1922*w[4]) + w[3]*(3443*w[3] - 2522*w[4]) + 547*detail::sq(w[4]),
@@ -297,9 +327,9 @@ struct Weno9 {                                 // 9-point, 9th order — WENO-Z
     static constexpr int       radius = 4;
     static constexpr Real reconstruct(std::array<Real, 9> w, Bias bias) {
         if (bias == Bias::Left) { std::array<Real, 9> r{}; for (int i = 0; i < 9; ++i) r[i] = w[8 - i]; w = r; }
+        constexpr auto C = detail::weno_weight_table<5>();       // candidate coeffs, baked at COMPILE time
         Real p[5];
-        for (int r = 0; r < 5; ++r)
-            p[r] = detail::poly_at(detail::exact_poly<5>({ w[r], w[r+1], w[r+2], w[r+3], w[r+4] }, r - 4), Real(1));
+        for (int r = 0; r < 5; ++r) { Real acc = Real(0); for (int j = 0; j < 5; ++j) acc += C[r][j]*w[r+j]; p[r] = acc; }
         Real b[5];            // rakali's simplified 3-term β, centred on w[r+2]
         for (int r = 0; r < 5; ++r) {
             const int c = r + 2;
@@ -320,5 +350,16 @@ static_assert(FaceReconstruction<Weno5> && FaceReconstruction<Weno7> &&
               FaceReconstruction<Weno9>);
 static_assert(Reconstructor<Ppm> && Reconstructor<Weno5>);
 static_assert(!FaceReconstruction<Ppm> && !WallReconstruction<Weno5>);
+
+// The candidate weights ARE computed at compile time and match the textbook constants:
+// WENO5's centred candidate (cells {i,i+1,i+2}, right edge) is (2,5,-1)/6. If this line
+// compiles, the Gauss–Jordan ran in the compiler and produced rakali's hand-tuned numbers.
+namespace detail_test {
+inline constexpr auto C5 = tc::detail::weno_weight_table<3>();
+static_assert(tc::detail::aabs(C5[2][0] - tc::Real(1)/3) < tc::Real(1e-12) &&   //  2/6
+              tc::detail::aabs(C5[2][1] - tc::Real(5)/6) < tc::Real(1e-12) &&   //  5/6
+              tc::detail::aabs(C5[2][2] + tc::Real(1)/6) < tc::Real(1e-12),     // -1/6
+              "WENO5 centred candidate weights must be (2,5,-1)/6");
+}
 
 } // namespace tc
