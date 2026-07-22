@@ -18,6 +18,7 @@
 
 #include <concepts>
 #include <span>
+#include <array>
 #include "physics/state/baro_state.hpp"
 
 namespace tc {
@@ -28,36 +29,41 @@ namespace detail {
 struct SampleRhs { void operator()(BaroState, BaroState) const {} };
 struct SampleBc  { void operator()(BaroState) const {} };
 
-// ── SspStep<N> — the SSP-RK coefficients, ONCE (Shu–Osher convex-combination form) ──
-// An SSP-RK scheme is a convex combination of a FORWARD OPERATOR φ: a nullary callable
-// that advances the live state one forward-Euler-like step (by dt), in place, managing
-// its own internals. `s0` is the saved-sⁿ register (the only explicit scratch the combine
-// needs). This is the single home for the ½/½, ¾/¼, ⅓/⅔ coefficients — the method-of-lines
-// integrators below plug φ = (fill halos; RHS; s += dt·L(s)); the split stepper plugs φ = its
-// whole mode-split stage. `axpby` is resolved by ADL on the (dependent) State at instantiation.
-template <int Stages> struct SspStep;
-template <> struct SspStep<1> {                       // forward Euler — a single φ, no combine
-    template <class State, class Phi> static void run(State s, State s0, Phi phi) {
-        (void)s; (void)s0;                            // nothing to save, nothing to blend
-        phi();                                        // sⁿ⁺¹ = Φ(sⁿ)
-    }
+// ── The SSP-RK family, as a coefficient TABLE + one generic stepper (Shu–Osher form) ──
+// An SSP-RK scheme IS a table of Shu–Osher blend pairs: stage 1 is a pure forward step Φ, then
+// each row (a,b) does  s ← a·sⁿ + b·Φ(s). The table is the scheme's published definition — and it
+// makes the SSP property VISIBLE: every row is a CONVEX combination (a,b ≥ 0, a+b = 1), which is
+// exactly what "strong-stability-preserving" means. So the coefficients live ONCE as named data
+// (SspBlend<N>) and the stepping algorithm is written ONCE (SspStep) — add a scheme = add a row.
+//
+// φ is a nullary callable advancing the live state one forward-Euler-like step (by dt) in place,
+// managing its own internals; `s0` is the saved-sⁿ register (the only explicit scratch). The MoL
+// integrators below plug φ = (fill halos; RHS; s += dt·L(s)); the split stepper plugs φ = its whole
+// mode-split stage. `axpby` is resolved by ADL on the (dependent) State at instantiation.
+template <int Stages> struct SspBlend;                          // the coefficient table, per scheme
+template <> struct SspBlend<1> {                               // forward Euler — no blends (one Φ)
+    static constexpr std::array<std::array<Real, 2>, 0> ab = {};
 };
-template <> struct SspStep<2> {                       // SSP-RK2 (Heun)
-    template <class State, class Phi> static void run(State s, State s0, Phi phi) {
-        axpby(s0, Real(1), s, Real(0), s);            // s0 ← sⁿ
-        phi();                                        // s  ← u1 = Φ(sⁿ)
-        phi();                                        // s  ← Φ(u1)
-        axpby(s, Real(0.5), s0, Real(0.5), s);        // s  ← sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
-    }
+template <> struct SspBlend<2> {                               // SSP-RK2 (Heun)
+    static constexpr std::array<std::array<Real, 2>, 1> ab = {{ {Real(1)/2, Real(1)/2} }};
 };
-template <> struct SspStep<3> {                       // SSP-RK3 (imaginary-axis-stable)
+template <> struct SspBlend<3> {                               // SSP-RK3 (imaginary-axis-stable)
+    static constexpr std::array<std::array<Real, 2>, 2> ab = {{ {Real(3)/4, Real(1)/4},
+                                                                {Real(1)/3, Real(2)/3} }};
+};
+
+// The ONE stepper for the whole family — reads SspBlend<Stages>. The fixed-size constexpr table
+// unrolls + inlines fully (zero runtime cost, device-safe): the same machine code the hand-
+// unrolled version emitted, now driven by an auditable table of numbers.
+template <int Stages>
+struct SspStep {
     template <class State, class Phi> static void run(State s, State s0, Phi phi) {
-        axpby(s0, Real(1), s, Real(0), s);            // s0 ← sⁿ
-        phi();                                        // s  ← u1 = Φ(sⁿ)
-        phi();                                        // s  ← Φ(u1)
-        axpby(s, Real(0.75), s0, Real(0.25), s);      // s  ← u2 = ¾sⁿ + ¼Φ(u1)
-        phi();                                        // s  ← Φ(u2)
-        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);    // s  ← sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
+        axpby(s0, Real(1), s, Real(0), s);                     // s0 ← sⁿ
+        phi();                                                 // s  ← Φ(sⁿ)   (stage 1: a pure φ)
+        for (const auto& c : SspBlend<Stages>::ab) {
+            phi();                                             // s  ← Φ(s)
+            axpby(s, c[0], s0, c[1], s);                       // s  ← a·sⁿ + b·Φ(s)
+        }
     }
 };
 }  // namespace detail
