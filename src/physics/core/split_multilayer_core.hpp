@@ -1,7 +1,7 @@
 #pragma once
 // =============================================================================
-// physics/core/split_two_layer.hpp — SPLIT-EXPLICIT two-layer core (M3.5, DESIGN ADR-9),
-// the rakali run_stage_split flow. Per baroclinic step Δt:
+// physics/core/split_multilayer_core.hpp — SPLIT-EXPLICIT multilayer core (M3.5, ADR-9),
+// SplitMultilayerCore<NL>, the rakali run_stage_split flow. Per baroclinic step Δt:
 //   1. entry barotropic state (η=Σₖhₖ, U=depth-mean); save U at entry (ubt_n).
 //   2. slow momentum tendencies: per-layer Coriolis+adv (kcor) + 2-layer PGF (kpgf).
 //   3. barotropic forcing: F_fast = depth-mean(kcor);  F_full = F_fast + depth-mean(kpgf).
@@ -34,10 +34,9 @@
 
 namespace tc {
 
-template <Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf2L,
+template <int NL, Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf,
           BoundaryCondition Bc, int M = 30, class Outer = OuterSSPRK3>
-class SplitTwoLayerCore {
-    static constexpr int NL = 2;
+class SplitMultilayerCore {
     Msh    mesh_;
     Arena& arena_;
     Params p_{};
@@ -45,7 +44,7 @@ class SplitTwoLayerCore {
 
     Cont  cont_{};                                  // per-layer continuity (PPM: accurate thickness/tracers)
     Cor   cor_{};                                   // per-layer Coriolis + advection
-    Pgf2L pgf_{};                                   // two-layer reduced-gravity PGF
+    Pgf   pgf_{};                                   // coupling PGF (reduced-gravity for NL=2)
     Bc    bc_{};
     // The barotropic mode is the FAST surface gravity wave, not a tracer — it needs no
     // PPM reconstruction (rakali uses a plain centred face thickness). Running PPM's
@@ -74,7 +73,7 @@ class SplitTwoLayerCore {
 public:
     // m_inner overrides the barotropic substep count at RUNTIME (default = template M);
     // nothing is sized by it, so sweeping dt/M needs no recompile.
-    SplitTwoLayerCore(Msh mesh, Arena& a, Params p, int m_inner = M)
+    SplitMultilayerCore(Msh mesh, Arena& a, Params p, int m_inner = M)
         : mesh_(mesh), arena_(a), p_(p), M_(m_inner) {}
 
     void init() {
@@ -165,13 +164,15 @@ public:
             for_each_cell(m.extent_x(Loc::XFace), m.extent_y(Loc::XFace), [=](Index i, Index j) { u[i, j] -= um[i, j] - ue[i, j]; });
             for_each_cell(m.extent_x(Loc::YFace), m.extent_y(Loc::YFace), [=](Index i, Index j) { v[i, j] -= vm[i, j] - ve[i, j]; });
         }
-        // 8. h-rescale: Σₖ hₖ = η_end (mass consistency)
+        // 8. h-rescale: Σₖ hₖ = η_end (mass consistency) — generalised over NL.
         {
-            const Field2 h0 = state_.layer[0].eta, h1 = state_.layer[1].eta, ee = bt_end_.eta;
+            const LayeredState<NL> st = state_;              // POD views, capture by value (never `this`)
+            const Field2 ee = bt_end_.eta;
             for_each_cell(m.extent_x(Loc::Center), m.extent_y(Loc::Center), [=](Index i, Index j) {
-                const Real tot = h0[i, j] + h1[i, j];
+                Real tot = 0;
+                for (int l = 0; l < NL; ++l) tot += st.layer[l].eta[i, j];
                 const Real f = tot > Real(0) ? ee[i, j] / tot : Real(1);
-                h0[i, j] *= f; h1[i, j] *= f;
+                for (int l = 0; l < NL; ++l) st.layer[l].eta[i, j] *= f;
             });
         }
 
@@ -179,9 +180,8 @@ public:
     }
 };
 
-// bc_inst split instantiation (M=30 barotropic substeps by default).
-using SplitTwoLayerPoC =
-    SplitTwoLayerCore<CartesianMesh, PpmContinuity, SadournyEnstrophy,
-                      TwoLayerReducedGravityPgf, WallBC>;
+// The bc_inst two-layer split configuration is just SplitMultilayerCore<2, …,
+// TwoLayerReducedGravityPgf, …> — instantiated directly at the call sites (the demo, the
+// split oracle). NL>2 awaits the Montgomery PGF + array Params (deferred).
 
 } // namespace tc

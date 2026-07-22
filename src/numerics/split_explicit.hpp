@@ -37,6 +37,7 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
+#include "numerics/integrator.hpp"   // detail::SspStep<N> — the shared SSP-RK coefficients
 
 namespace tc {
 
@@ -95,31 +96,22 @@ inline int bt_n_inner(Real dt_outer, Real c_ext, Real dx, Real dy, Real cfl_safe
 // (imaginary) axis: FwdEuler is UNCONDITIONALLY unstable (grows as (ωΔt)²); SSP-RK2
 // (Heun, rakali's outer) grows only as (ωΔt)⁴ — fine WITH real viscosity; SSP-RK3 is
 // bounded for |ωΔt|<1.73 — stable without leaning on dissipation. A compile-time
-// policy (Integrator-axis, ADR-9): swap the outer scheme with one template arg.
+// policy (Integrator-axis, ADR-9): swap the outer scheme with one template arg. The
+// Shu–Osher coefficients live ONCE in `detail::SspStep<N>` (numerics/integrator.hpp) —
+// the SAME combiner the method-of-lines integrators use; these just supply φ = the split
+// STAGE (a nullary in-place forward step) instead of a forward-Euler-over-L step, and
+// name the stage count for the policy axis.
 struct OuterFwdEuler {                                   // 1 stage — demonstrates the blow-up
     static constexpr int stages = 1;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        (void)s; (void)s0; stage();
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<1>::run(s, s0, stage); }
 };
 struct OuterSSPRK2 {                                     // Heun — matches rakali
     static constexpr int stages = 2;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
-        stage();                                          // u1 = Φ(sⁿ)
-        stage();                                          // Φ(u1)
-        axpby(s, Real(0.5), s0, Real(0.5), s);            // sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<2>::run(s, s0, stage); }
 };
 struct OuterSSPRK3 {                                     // imaginary-axis-stable to |ωΔt|<1.73
     static constexpr int stages = 3;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
-        stage(); stage();                                 // Φ(u1)
-        axpby(s, Real(0.75), s0, Real(0.25), s);          // u2 = ¾sⁿ + ¼Φ(u1)
-        stage();                                          // Φ(u2)
-        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);        // sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<3>::run(s, s0, stage); }
 };
 
 // ── Thickness-weighted depth-mean of a per-layer FACE field (rakali face_depth_mean)
@@ -148,65 +140,11 @@ inline void depth_mean_faces(LayeredState<NL> fld, LayeredState<NL> h, BaroState
     });
 }
 
-// ── The split-explicit stepper (skeleton) ────────────────────────────────────────
-// Parameterised by NL layers and the barotropic sub-solver `Baro` (the FB substep +
-// the 2D operators over a BaroState). Owns arena-backed scratch: the live barotropic
-// state, the running transport sum → time-mean (continuity leg), the end-step
-// snapshot (momentum leg), the fast forcing F_bt_fast, and the entry depth-mean.
-template <int NL, class Baro>
-class SplitExplicit {
-    int       M_ = 1;              // n_inner, latched at init (CFL-derived)
-    BaroState bt_{};              // live barotropic (η, U, V) during the subcycle
-    BaroState bt_sum_{};          // Σ over substeps → uniform time-mean (transports)
-    BaroState bt_end_{};          // end-of-subcycle snapshot (η_end, U_end, V_end)
-    BaroState bt_frc_{};          // F_bt_fast: depth-mean slow forcing − BT PGF projection
-    BaroState ubt_at_n_{};        // entry depth-mean barotropic velocity (for Δu)
-
-public:
-    template <Mesh Msh>
-    void init(Arena& a, const Msh& m, Real dt, Real c_ext) {
-        M_       = bt_n_inner(dt, c_ext, m.dx(Loc::XFace, 0, 0), m.dy(Loc::YFace, 0, 0));
-        bt_      = allocate_baro_state(a, m);
-        bt_sum_  = allocate_baro_state(a, m);
-        bt_end_  = allocate_baro_state(a, m);
-        bt_frc_  = allocate_baro_state(a, m);
-        ubt_at_n_ = allocate_baro_state(a, m);
-    }
-
-    int n_inner() const { return M_; }
-
-    // One outer baroclinic step (the split lives INSIDE each outer RK2 stage in the
-    // rakali driver; the caller supplies the layered slow-RHS, the barotropic ops,
-    // and the BC). See ADR-9 for the three stages; kernels are TODO(M3.5).
-    template <Mesh Msh, class SlowRhs, class BtOps, class BcOp>
-    void step(LayeredState<NL> s, const Msh& mesh, Params p,
-              SlowRhs slow_rhs, BtOps bt_ops, BcOp bc) {
-        (void)s; (void)mesh; (void)p; (void)slow_rhs; (void)bt_ops; (void)bc; (void)M_;
-        // ── Stage 1 — slow RHS + barotropic forcing ────────────────────────────────
-        // TODO(M3.5): k = slow_rhs(s)  (per-layer baroclinic PGF, Coriolis+adv, visc, drag)
-        //             F_bt   = face_depth_mean(k.momentum)          (Σ F·h_face / Σ h_face)
-        //             bt_frc_ = F_bt − face_depth_mean(∇p)          (drop the BT PGF part —
-        //                       else the substep double-counts it and √(gH)→√(2gH))
-        //             derive bt_ from the layers: η=Σₖhₖ−H_ref, U=Σₖhₖuₖ/Σₖhₖ; save ubt_at_n_.
-        //
-        // ── Stage 2 — Forward-Backward Euler subcycle (the cheap fast part) ─────────
-        // TODO(M3.5): zero bt_sum_; δt = p.dt/M_
-        //             for m in [0,M_):
-        //               bt_ops.eta_step(bt_, mesh, δt);                 // η first, uses Uⁿ
-        //               bt_ops.uv_step (bt_, bt_frc_, mesh, δt);        // then U,V: Sadourny+KE
-        //                                                               //   + backward −g∇η + F_bt_fast
-        //               bt_sum_ += bt_ (accumulate transports)
-        //             bt_end_ = bt_;                                    // end-step snapshot
-        //             bt_sum_ *= 1/M_;                                  // uniform time-mean transport
-        //
-        // ── Stage 3 — couple the two anchors back into the layers ──────────────────
-        // TODO(M3.5): (a) continuity: advance hₖ with the slow flux renormalised so
-        //                 Σₖ hₖuₖ = bt_sum_ (time-mean)  ⇒  Σₖ hₖ = H + η_end (mass).
-        //             (b) momentum: Δu = bt_end_.U − ubt_at_n_.U − p.dt·F_bt  into every layer.
-        //             (c) Eulerian h-rescale to Σₖ hₖ = H + η_end; bc(s).
-        //
-        // ORACLE: M_=1 collapses to unsplit; M_≫1 reproduces the unsplit bc_inst eddies.
-    }
-};
+// NOTE: the split-explicit STEPPER now lives in physics/core/split_multilayer_core.hpp
+// as SplitMultilayerCore<NL> — the working, tested implementation of the rakali
+// run_stage_split flow. This header retains only the reusable mode-split PRIMITIVES
+// (derive_bt_from_layers, depth_mean_faces, bt_n_inner) and the Outer* SSP wrappers; the
+// earlier SplitExplicit<NL,Baro> scaffold (a never-wired-up skeleton) was superseded by
+// SplitMultilayerCore and removed.
 
 } // namespace tc
