@@ -180,15 +180,8 @@ public:
     }
 };
 
-// Back-compat: the split two-layer core is SplitMultilayerCore<2>. Kept so existing
-// includers (the demo, the split oracle) read unchanged until they're rewired.
-template <Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf,
-          BoundaryCondition Bc, int M = 30, class Outer = OuterSSPRK3>
-using SplitTwoLayerCore = SplitMultilayerCore<2, Msh, Cont, Cor, Pgf, Bc, M, Outer>;
-
-// bc_inst split instantiation (M=30 barotropic substeps by default).
-using SplitTwoLayerPoC =
-    SplitMultilayerCore<2, CartesianMesh, PpmContinuity, SadournyEnstrophy,
-                        TwoLayerReducedGravityPgf, WallBC>;
+// The bc_inst two-layer split configuration is just SplitMultilayerCore<2, …,
+// TwoLayerReducedGravityPgf, …> — instantiated directly at the call sites (the demo, the
+// split oracle). NL>2 awaits the Montgomery PGF + array Params (deferred).
 
 } // namespace tc

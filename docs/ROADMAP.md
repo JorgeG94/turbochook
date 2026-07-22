@@ -100,8 +100,9 @@ north star ("split-explicit") and what makes a 300-day integration a routine job
 energy/mass) with `M`-fold fewer layered RHS evals and a measured `≥10×` speedup; GPU-stable.
 
 **Status: working & stable.** Stages 1–5 done (`BarotropicSolver` FB substep,
-`derive_bt_from_layers`, `depth_mean_faces`, `SplitTwoLayerCore`) + the **outer-scheme policy**
-(`OuterFwdEuler`/`OuterSSPRK2`/`OuterSSPRK3`). Oracle passes with RK2 and RK3 — a two-layer
+`derive_bt_from_layers`, `depth_mean_faces`, `SplitMultilayerCore<NL>` — bc_inst is `<2>`) +
+the **outer-scheme policy** (`OuterFwdEuler`/`OuterSSPRK2`/`OuterSSPRK3`, now thin wrappers over
+`detail::SspStep<N>`). Oracle passes with RK2 and RK3 — a two-layer
 barotropic wave through the split recovers `√(g(H₁+H₂))` at outer CFL≈2. `demo_baroclinic_split`
 rolls the `bc_inst` jet into a clean turbulent eddy field at `dt=120s` (M=10), **20× fewer
 layered evals**, mass to 0.01%, over a full 55-day run with **no blow-up**.

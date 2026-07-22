@@ -14,7 +14,7 @@
 #include "mesh/cartesian_mesh.hpp"
 #include "physics/state/layered_state.hpp"
 #include "numerics/split_explicit.hpp"
-#include "physics/core/split_two_layer.hpp"
+#include "physics/core/split_multilayer_core.hpp"
 
 using tc::Real;
 using tc::Index;
@@ -71,8 +71,8 @@ TEST_CASE("split two-layer: barotropic gravity wave at sqrt(g(H1+H2)) with big o
     tc::Arena arena(64u << 20);
     tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dy, .dt = dt, .g = g, .H = H,
                   .H1 = H1, .H2 = H2, .rho1 = 1025, .rho2 = 1025 };   // ρ1=ρ2 → pure barotropic
-    tc::SplitTwoLayerCore<tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
-                          tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p);
+    tc::SplitMultilayerCore<2, tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                            tc::TwoLayerReducedGravityPgf, tc::WallBC, Msub> core(mesh, arena, p);
     core.init();
 
     const tc::Field2 e0 = core.state().layer[0].eta, e1 = core.state().layer[1].eta;
@@ -111,8 +111,8 @@ TEST_CASE("split two-layer: outer scheme is a swappable policy (RK2 also recover
     tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dx, .dt = dt, .g = g, .H = H,
                   .H1 = H1, .H2 = H2, .rho1 = 1025, .rho2 = 1025 };
     // same stack, RK2 outer instead of the default RK3
-    tc::SplitTwoLayerCore<tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
-                          tc::TwoLayerReducedGravityPgf, tc::WallBC, 20, tc::OuterSSPRK2> core(mesh, arena, p);
+    tc::SplitMultilayerCore<2, tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                            tc::TwoLayerReducedGravityPgf, tc::WallBC, 20, tc::OuterSSPRK2> core(mesh, arena, p);
     core.init();
     const tc::Field2 e0 = core.state().layer[0].eta, e1 = core.state().layer[1].eta;
     tc::for_each_cell(mesh.extent_x(tc::Loc::Center), mesh.extent_y(tc::Loc::Center), [=](Index i, Index j) {
