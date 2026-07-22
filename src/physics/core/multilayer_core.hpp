@@ -1,16 +1,17 @@
 #pragma once
 // =============================================================================
-// physics/core/multilayer_core.hpp — the two-layer composed solver (M3).
+// physics/core/multilayer_core.hpp — the composed multilayer (unsplit) solver (M3).
 //
-// The god-state for a stacked two-layer C-grid. The structure that makes it
-// baroclinic: continuity and Coriolis run PER LAYER (reusing the single-layer
+// The god-state for a stacked N-layer C-grid, MultilayerCore<NL>. The structure that
+// makes it baroclinic: continuity and Coriolis run PER LAYER (reusing the single-layer
 // operators unchanged — one instance, reused for each layer since the passes are
-// synchronous), and the reduced-gravity PGF COUPLES the layers (each layer's
-// pressure depends on both thicknesses). The generic Integrator steps the whole
-// LayeredState<2>; a per-layer BC fills halos.
+// synchronous), and the coupling PGF ties the layers (each layer's pressure depends on
+// the overlying thicknesses). The generic Integrator steps the whole LayeredState<NL>; a
+// per-layer BC fills halos. NL=2 with the reduced-gravity PGF is today's instantiation
+// (TwoLayerPoC); NL>2 waits on the Montgomery PGF + array Params (deferred).
 //
 //     ∂h_k/∂t = -∇·(h_k u_k)                 [Continuity, per layer]
-//     ∂u_k/∂t = -∇p_k + (ζ_k+f)·v_k + adv    [reduced-gravity PGF + Coriolis]
+//     ∂u_k/∂t = -∇p_k + (ζ_k+f)·v_k + adv    [coupling PGF + Coriolis]
 // =============================================================================
 
 #include <array>
@@ -27,14 +28,14 @@
 
 namespace tc {
 
-template <Mesh              Msh,
+template <int               NL,
+          Mesh              Msh,
           ContinuityModule  Cont,
           CoriolisModule    Cor,
-          class             Pgf,       // a 2-layer (coupling) PGF over LayeredState<2>
+          class             Pgf,       // a coupling PGF over LayeredState<NL>
           BoundaryCondition Bc,
           Integrator        Integ>
-class TwoLayerCore {
-    static constexpr int NL = 2;
+class MultilayerCore {
     Msh    mesh_;
     Arena& arena_;
     Params p_{};
@@ -48,7 +49,7 @@ class TwoLayerCore {
     std::array<LayeredState<NL>, Integ::n_scratch> scratch_{};
 
 public:
-    TwoLayerCore(Msh mesh, Arena& a, Params p) : mesh_(mesh), arena_(a), p_(p) {}
+    MultilayerCore(Msh mesh, Arena& a, Params p) : mesh_(mesh), arena_(a), p_(p) {}
 
     void init() {
         state_ = allocate_layered_state<NL>(arena_, mesh_);
@@ -56,7 +57,7 @@ public:
         cont_.init(arena_, mesh_);
         cor_ .init(arena_, mesh_);
         pgf_ .init(arena_, mesh_);
-        tc::logger().info("TwoLayerCore init: {}x{} grid x {} layers, arena {}/{} bytes",
+        tc::logger().info("MultilayerCore init: {}x{} grid x {} layers, arena {}/{} bytes",
                           mesh_.nx(), mesh_.ny(), NL, arena_.bytes_used(), arena_.bytes_capacity());
     }
 
@@ -80,10 +81,17 @@ public:
     const Msh& mesh() const { return mesh_; }
 };
 
+// Back-compat: the two-layer core is MultilayerCore<2>. Kept so downstream code reads
+// unchanged (the reduced-gravity PGF + 2-layer Params fix NL=2 today; NL>2 waits on the
+// Montgomery PGF + array Params — deferred).
+template <Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf,
+          BoundaryCondition Bc, Integrator Integ>
+using TwoLayerCore = MultilayerCore<2, Msh, Cont, Cor, Pgf, Bc, Integ>;
+
 // The M3 two-layer instantiation: PPM continuity + Sadourny + reduced-gravity PGF
 // + wall BC + SSP-RK3 (gravity waves need the imaginary-axis-stable stepper).
 using TwoLayerPoC =
-    TwoLayerCore<CartesianMesh, PpmContinuity, SadournyEnstrophy,
-                 TwoLayerReducedGravityPgf, WallBC, SSPRK3>;
+    MultilayerCore<2, CartesianMesh, PpmContinuity, SadournyEnstrophy,
+                   TwoLayerReducedGravityPgf, WallBC, SSPRK3>;
 
 } // namespace tc
