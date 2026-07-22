@@ -37,6 +37,7 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
+#include "numerics/integrator.hpp"   // detail::SspStep<N> — the shared SSP-RK coefficients
 
 namespace tc {
 
@@ -95,31 +96,22 @@ inline int bt_n_inner(Real dt_outer, Real c_ext, Real dx, Real dy, Real cfl_safe
 // (imaginary) axis: FwdEuler is UNCONDITIONALLY unstable (grows as (ωΔt)²); SSP-RK2
 // (Heun, rakali's outer) grows only as (ωΔt)⁴ — fine WITH real viscosity; SSP-RK3 is
 // bounded for |ωΔt|<1.73 — stable without leaning on dissipation. A compile-time
-// policy (Integrator-axis, ADR-9): swap the outer scheme with one template arg.
+// policy (Integrator-axis, ADR-9): swap the outer scheme with one template arg. The
+// Shu–Osher coefficients live ONCE in `detail::SspStep<N>` (numerics/integrator.hpp) —
+// the SAME combiner the method-of-lines integrators use; these just supply φ = the split
+// STAGE (a nullary in-place forward step) instead of a forward-Euler-over-L step, and
+// name the stage count for the policy axis.
 struct OuterFwdEuler {                                   // 1 stage — demonstrates the blow-up
     static constexpr int stages = 1;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        (void)s; (void)s0; stage();
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<1>::run(s, s0, stage); }
 };
 struct OuterSSPRK2 {                                     // Heun — matches rakali
     static constexpr int stages = 2;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
-        stage();                                          // u1 = Φ(sⁿ)
-        stage();                                          // Φ(u1)
-        axpby(s, Real(0.5), s0, Real(0.5), s);            // sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<2>::run(s, s0, stage); }
 };
 struct OuterSSPRK3 {                                     // imaginary-axis-stable to |ωΔt|<1.73
     static constexpr int stages = 3;
-    template <class State, class Stage> static void advance(State s, State s0, Stage stage) {
-        axpby(s0, Real(1), s, Real(0), s);               // s0 = sⁿ
-        stage(); stage();                                 // Φ(u1)
-        axpby(s, Real(0.75), s0, Real(0.25), s);          // u2 = ¾sⁿ + ¼Φ(u1)
-        stage();                                          // Φ(u2)
-        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);        // sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
-    }
+    template <class State, class Stage> static void advance(State s, State s0, Stage stage) { detail::SspStep<3>::run(s, s0, stage); }
 };
 
 // ── Thickness-weighted depth-mean of a per-layer FACE field (rakali face_depth_mean)
