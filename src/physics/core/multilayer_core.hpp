@@ -8,7 +8,8 @@
 // synchronous), and the coupling PGF ties the layers (each layer's pressure depends on
 // the overlying thicknesses). The generic Integrator steps the whole LayeredState<NL>; a
 // per-layer BC fills halos. NL=2 with the reduced-gravity PGF is today's instantiation
-// (TwoLayerPoC); NL>2 waits on the Montgomery PGF + array Params (deferred).
+// (spelled MultilayerCore<2, …> at the call site); NL>2 waits on the Montgomery PGF +
+// array Params (deferred).
 //
 //     ∂h_k/∂t = -∇·(h_k u_k)                 [Continuity, per layer]
 //     ∂u_k/∂t = -∇p_k + (ζ_k+f)·v_k + adv    [coupling PGF + Coriolis]
@@ -81,17 +82,8 @@ public:
     const Msh& mesh() const { return mesh_; }
 };
 
-// Back-compat: the two-layer core is MultilayerCore<2>. Kept so downstream code reads
-// unchanged (the reduced-gravity PGF + 2-layer Params fix NL=2 today; NL>2 waits on the
-// Montgomery PGF + array Params — deferred).
-template <Mesh Msh, ContinuityModule Cont, CoriolisModule Cor, class Pgf,
-          BoundaryCondition Bc, Integrator Integ>
-using TwoLayerCore = MultilayerCore<2, Msh, Cont, Cor, Pgf, Bc, Integ>;
-
-// The M3 two-layer instantiation: PPM continuity + Sadourny + reduced-gravity PGF
-// + wall BC + SSP-RK3 (gravity waves need the imaginary-axis-stable stepper).
-using TwoLayerPoC =
-    MultilayerCore<2, CartesianMesh, PpmContinuity, SadournyEnstrophy,
-                   TwoLayerReducedGravityPgf, WallBC, SSPRK3>;
+// No bespoke two-layer alias: the two-layer case is just MultilayerCore<2, …> spelled
+// out at the call site (reduced-gravity PGF + 2-layer Params fix NL=2 today; NL>2 waits
+// on the Montgomery PGF + array Params — deferred).
 
 } // namespace tc

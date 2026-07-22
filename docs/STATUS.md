@@ -43,7 +43,7 @@ src/physics/  state/       baro_state (BaroState + Params), layered_state (Layer
               tracer/      tracer · eos                     [stubs → M4/Later]
               lateral/     dissipation · lateral_mix        [stubs → M3.5/Later]
               forcing/     forcing                          [stub → Later]
-              core/        ocean_core → BarotropicPoC, multilayer_core → TwoLayerPoC [M3],
+              core/        ocean_core → BarotropicPoC, multilayer_core (MultilayerCore<NL>, unsplit) [M3],
                            split_multilayer_core (SplitMultilayerCore<NL>), barotropic (FB subcycler)
 src/diag/     reduce.hpp + quantity/registry (the Registry) + report (Reporter) + diagnostics
 src/bc/       bc.hpp  WallBC / PeriodicBC   (fold / sponge / obc stubs)

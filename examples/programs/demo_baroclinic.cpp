@@ -94,8 +94,8 @@ int main(int argc, char** argv) {
     tc::Arena arena(std::size_t(N) * N * 3 * 8 * 24 + (64u << 20));
     tc::Params p{ .nx = N, .ny = N, .dx = dxmin, .dy = mesh.dy(Loc::Center, 0, 0), .dt = dt,
                   .g = g, .H = H1 + H2, .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
-    tc::TwoLayerCore<tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
-                     tc::TwoLayerReducedGravityPgf, tc::WallBC, tc::SSPRK3> core(mesh, arena, p);
+    tc::MultilayerCore<2, tc::SphericalMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                       tc::TwoLayerReducedGravityPgf, tc::WallBC, tc::SSPRK3> core(mesh, arena, p);
     core.init();
     tc::Field2 tmp = arena.alloc2d(N, N);                            // Shapiro scratch
 

@@ -108,7 +108,8 @@ TEST_CASE("TwoLayer barotropic wave: ρ₁=ρ₂ ⇒ surface mode at √(g(H₁+
     tc::Arena arena(48u << 20);
     tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dy, .dt = dt, .g = g, .H = H,
                   .H1 = H1, .H2 = H2, .rho1 = 1025, .rho2 = 1025 };   // ρ₁=ρ₂ → pure barotropic
-    tc::TwoLayerPoC core(mesh, arena, p);
+    tc::MultilayerCore<2, tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                       tc::TwoLayerReducedGravityPgf, tc::WallBC, tc::SSPRK3> core(mesh, arena, p);
     core.init();
 
     // surface anomaly A·cos(kx), distributed by layer depth; both layers at rest.
@@ -152,7 +153,8 @@ TEST_CASE("TwoLayer baroclinic wave: internal mode at c' = √(g'·H₁H₂/(H�
     tc::Arena arena(48u << 20);
     tc::Params p{ .nx = nx, .ny = ny, .dx = dx, .dy = dy, .dt = dt, .g = g, .H = H,
                   .H1 = H1, .H2 = H2, .rho1 = rho1, .rho2 = rho2 };
-    tc::TwoLayerPoC core(mesh, arena, p);
+    tc::MultilayerCore<2, tc::CartesianMesh, tc::PpmContinuity, tc::SadournyEnstrophy,
+                       tc::TwoLayerReducedGravityPgf, tc::WallBC, tc::SSPRK3> core(mesh, arena, p);
     core.init();
 
     // exact baroclinic eigenvector (η₂ = R·η₁, surface ≈ flat), at rest → pure internal mode
