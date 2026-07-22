@@ -36,21 +36,28 @@ struct SampleBc  { void operator()(BaroState) const {} };
 // integrators below plug φ = (fill halos; RHS; s += dt·L(s)); the split stepper plugs φ = its
 // whole mode-split stage. `axpby` is resolved by ADL on the (dependent) State at instantiation.
 template <int Stages> struct SspStep;
-template <> struct SspStep<1> {                               // forward Euler (one φ, no save)
-    template <class State, class Phi> static void run(State s, State s0, Phi phi) { (void)s; (void)s0; phi(); }
-};
-template <> struct SspStep<2> {                               // SSP-RK2 (Heun)
+template <> struct SspStep<1> {                       // forward Euler — a single φ, no combine
     template <class State, class Phi> static void run(State s, State s0, Phi phi) {
-        axpby(s0, Real(1), s, Real(0), s);                    // s0 = sⁿ
-        phi(); phi();                                         // Φ(u1),  u1 = Φ(sⁿ)
-        axpby(s, Real(0.5), s0, Real(0.5), s);                // sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
+        (void)s; (void)s0;                            // nothing to save, nothing to blend
+        phi();                                        // sⁿ⁺¹ = Φ(sⁿ)
     }
 };
-template <> struct SspStep<3> {                               // SSP-RK3 (imaginary-axis-stable)
+template <> struct SspStep<2> {                       // SSP-RK2 (Heun)
     template <class State, class Phi> static void run(State s, State s0, Phi phi) {
-        axpby(s0, Real(1), s, Real(0), s);                    // s0 = sⁿ
-        phi(); phi(); axpby(s, Real(0.75), s0, Real(0.25), s);// u2 = ¾sⁿ + ¼Φ(u1)
-        phi();        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);// sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
+        axpby(s0, Real(1), s, Real(0), s);            // s0 ← sⁿ
+        phi();                                        // s  ← u1 = Φ(sⁿ)
+        phi();                                        // s  ← Φ(u1)
+        axpby(s, Real(0.5), s0, Real(0.5), s);        // s  ← sⁿ⁺¹ = ½sⁿ + ½Φ(u1)
+    }
+};
+template <> struct SspStep<3> {                       // SSP-RK3 (imaginary-axis-stable)
+    template <class State, class Phi> static void run(State s, State s0, Phi phi) {
+        axpby(s0, Real(1), s, Real(0), s);            // s0 ← sⁿ
+        phi();                                        // s  ← u1 = Φ(sⁿ)
+        phi();                                        // s  ← Φ(u1)
+        axpby(s, Real(0.75), s0, Real(0.25), s);      // s  ← u2 = ¾sⁿ + ¼Φ(u1)
+        phi();                                        // s  ← Φ(u2)
+        axpby(s, Real(1) / 3, s0, Real(2) / 3, s);    // s  ← sⁿ⁺¹ = ⅓sⁿ + ⅔Φ(u2)
     }
 };
 }  // namespace detail
