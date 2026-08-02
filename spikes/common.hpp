@@ -87,6 +87,27 @@ inline void cuda_ck(cudaError_t e, const char* what) {
     }
 }
 
+// CUDA 13.0 changed cudaMemAdvise / cudaMemPrefetchAsync to take a
+// `cudaMemLocation` struct instead of a plain device ordinal (these were the _v2
+// pair added in 12.2, promoted to the unversioned names in 13.0). Guard on
+// CUDART_VERSION so ONE source builds on a CUDA 12 box and a CUDA 13 box alike.
+//
+// Worth noting for the real design: this is exactly the churn the `device_alloc`
+// seam exists to absorb. Two lines behind one function here; scattered across
+// fifty operators it would be a migration.
+inline void advise_and_prefetch(void* p, std::size_t bytes, int dev) {
+#if defined(CUDART_VERSION) && CUDART_VERSION >= 13000
+    cudaMemLocation loc{};
+    loc.type = cudaMemLocationTypeDevice;
+    loc.id   = dev;
+    cuda_ck(cudaMemAdvise(p, bytes, cudaMemAdviseSetPreferredLocation, loc), "cudaMemAdvise");
+    cuda_ck(cudaMemPrefetchAsync(p, bytes, loc, 0u, cudaStream_t(0)), "cudaMemPrefetchAsync");
+#else
+    cuda_ck(cudaMemAdvise(p, bytes, cudaMemAdviseSetPreferredLocation, dev), "cudaMemAdvise");
+    cuda_ck(cudaMemPrefetchAsync(p, bytes, dev, cudaStream_t(0)), "cudaMemPrefetchAsync");
+#endif
+}
+
 // (a) MANAGED + advise + prefetch: stdpar-compatible AND device-resident. The
 //     100x penalty comes from host-triggered page faults, not from managed
 //     memory itself — so a pool that is prefetched once and never touched by
@@ -94,8 +115,7 @@ inline void cuda_ck(cudaError_t e, const char* what) {
 inline Real* pool_managed_prefetched(std::size_t bytes, int dev = 0) {
     void* p = nullptr;
     cuda_ck(cudaMallocManaged(&p, bytes), "cudaMallocManaged");
-    cuda_ck(cudaMemAdvise(p, bytes, cudaMemAdviseSetPreferredLocation, dev), "cudaMemAdvise");
-    cuda_ck(cudaMemPrefetchAsync(p, bytes, dev), "cudaMemPrefetchAsync");
+    advise_and_prefetch(p, bytes, dev);
     cuda_ck(cudaDeviceSynchronize(), "sync after prefetch");
     return static_cast<Real*>(p);
 }

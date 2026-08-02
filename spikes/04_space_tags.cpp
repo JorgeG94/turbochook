@@ -55,8 +55,11 @@ public:
     // (A kernel gets a raw view instead — see view() — so the gate costs the
     // device path nothing.)
     T& operator()(int i, int j) const {
+        // ASCII ONLY in a static_assert message: nvc++'s EDG frontend renders
+        // non-ASCII as '???' (verified, nvc++ 26.5). Comments may use whatever;
+        // text that has to survive a COMPILER DIAGNOSTIC must not.
         static_assert(host_accessible(S),
-                      "host subscript of Space::Device storage — take a mirror() first");
+                      "host subscript of Space::Device storage - take a mirror() first");
         return p_[i + n0_ * j];
     }
 

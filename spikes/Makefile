@@ -19,6 +19,12 @@
 # Override as needed:  make s01 ARCH=cc90 NVCXX=nvc++ N=4096 ITERS=500
 # =============================================================================
 
+# Make variables are case-sensitive, so `make run arch=cc90` would silently build
+# for the DEFAULT arch and hand you a binary for the wrong card. Fail instead.
+ifdef arch
+$(error you passed arch=$(arch); the variable is ARCH (upper case). Use: make run ARCH=$(arch))
+endif
+
 ARCH   ?= cc80
 NVCXX  ?= nvc++
 NVCC   ?= nvcc
