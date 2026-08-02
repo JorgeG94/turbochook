@@ -28,6 +28,16 @@
 #include <sycl/sycl.hpp>
 #endif
 
+// TC_KERNEL — the only annotation a portable kernel body needs. Expands to
+// __host__ __device__ where a CUDA/HIP compiler is driving; nothing under nvc++
+// stdpar or icpx -fsycl, which need no annotation at all. Applied unconditionally
+// at every device-callable site; inert where it is not needed.
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#  define TC_KERNEL __host__ __device__
+#else
+#  define TC_KERNEL
+#endif
+
 namespace tc {
 
 using Real  = double;

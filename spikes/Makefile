@@ -153,6 +153,31 @@ syclx: s05c s05c_pstl s05d
 	@echo;  echo "  Then, for the tile question, with no rebuild:"
 	@echo   "     ZE_FLAT_DEVICE_HIERARCHY=FLAT $(BIN)/s05d $(N) $(ITERS)"
 
+# ── 06: is std::mdspan + a CUSTOM LAYOUT viable as the kernel currency? ──────
+#    Built four ways. A build failure on any one is a result, not a bug — the
+#    availability answer is exactly what decides whether to ask ALCF for a newer
+#    libstdc++ or to keep owning the type.
+s06:      $(BIN)/s06
+s06_gpu:  $(BIN)/s06_gpu
+s06_sycl: $(BIN)/s06_sycl
+
+$(BIN)/s06: 06_mdspan_layout.cpp common.hpp                    # host / any compiler
+	-$(CXX) $(STD) $(OPT) -w $(HOSTFLAGS) $< -o $@ 2>&1 | tee $(BIN)/s06_build.log
+
+$(BIN)/s06_gpu: 06_mdspan_layout.cpp common.hpp                # nvc++ -stdpar=gpu
+	-$(NVCXX) $(STD) $(OPT) -stdpar=gpu -gpu=$(ARCH) -cuda -DTC_SPIKE_CUDA $< -o $@ \
+	    2>&1 | tee $(BIN)/s06_gpu_build.log
+
+$(BIN)/s06_sycl: 06_mdspan_layout.cpp common.hpp               # icpx -fsycl
+	-$(ICPX) $(STD) $(OPT) -fsycl $(SYCL_TARGET) -DTC_SPIKE_SYCL $< -o $@ \
+	    2>&1 | tee $(BIN)/s06_sycl_build.log
+
+.PHONY: mdspan
+mdspan: s06
+	@echo; echo "################ spike 06 (host) #########################"
+	@-test -x $(BIN)/s06 && $(BIN)/s06 1024 50 || \
+	   echo "  (did not build -- see $(BIN)/s06_build.log; that is a RESULT)"
+
 all: s04 s01 s02 s03 s03b
 
 run: all
