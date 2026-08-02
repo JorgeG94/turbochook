@@ -115,13 +115,43 @@ $(BIN)/s05b: 05b_sycl_stdpar.cpp common.hpp
 	-$(ICPX) $(STD) $(OPT) -fsycl $(PSTL_OFFLOAD) $(SYCL_TARGET) \
 	    -DTC_SPIKE_SYCL $< -o $@ 2>&1 | tee $(BIN)/s05b_build.log
 
-.PHONY: sycl
+# 05c: is a stdpar-SHAPED launcher reachable on Intel at all? Built TWICE — the
+# std:: spellings need the pstl-offload flag, the oneDPL ones do not. Either build
+# may fail; each is a separate result.
+s05c: $(BIN)/s05c
+$(BIN)/s05c: 05c_sycl_stdpar_variants.cpp common.hpp
+	-$(ICPX) $(STD) $(OPT) -fsycl $(SYCL_TARGET) -DTC_SPIKE_SYCL $< -o $@ \
+	    2>&1 | tee $(BIN)/s05c_build.log
+
+s05c_pstl: $(BIN)/s05c_pstl
+$(BIN)/s05c_pstl: 05c_sycl_stdpar_variants.cpp common.hpp
+	-$(ICPX) $(STD) $(OPT) -fsycl $(PSTL_OFFLOAD) $(SYCL_TARGET) \
+	    -DTC_SPIKE_SYCL -DTC_TRY_PSTL $< -o $@ 2>&1 | tee $(BIN)/s05c_pstl_build.log
+
+# 05d: why only ~392 GB/s on a ~3.2 TB/s part?
+s05d: $(BIN)/s05d
+$(BIN)/s05d: 05d_sycl_perf_probe.cpp common.hpp
+	$(ICPX) $(STD) $(OPT) -fsycl $(SYCL_TARGET) -DTC_SPIKE_SYCL $< -o $@
+
+.PHONY: sycl syclx
 sycl: s05 s05b
 	@echo; echo "################ spike 05 (native SYCL) ##########"
 	@-test -x $(BIN)/s05  && $(BIN)/s05  $(N) $(ITERS) || echo "  (s05 did not build)"
 	@echo;  echo "################ spike 05b (stdpar) ##############"
 	@-test -x $(BIN)/s05b && $(BIN)/s05b $(N) $(ITERS) || \
 	   echo "  (s05b did not build — see $(BIN)/s05b_build.log; that is a RESULT)"
+
+syclx: s05c s05c_pstl s05d
+	@echo; echo "################ 05c  oneDPL dialect (no pstl flag) ########"
+	@-test -x $(BIN)/s05c && $(BIN)/s05c $(N) $(ITERS) || \
+	   echo "  (did not build — see $(BIN)/s05c_build.log)"
+	@echo;  echo "################ 05c  std:: spellings (pstl-offload) #######"
+	@-test -x $(BIN)/s05c_pstl && $(BIN)/s05c_pstl $(N) $(ITERS) || \
+	   echo "  (did not build — see $(BIN)/s05c_pstl_build.log; that is a RESULT)"
+	@echo;  echo "################ 05d  performance probe ####################"
+	@-test -x $(BIN)/s05d && $(BIN)/s05d $(N) $(ITERS) || echo "  (s05d did not build)"
+	@echo;  echo "  Then, for the tile question, with no rebuild:"
+	@echo   "     ZE_FLAT_DEVICE_HIERARCHY=FLAT $(BIN)/s05d $(N) $(ITERS)"
 
 all: s04 s01 s02 s03 s03b
 
