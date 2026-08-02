@@ -96,6 +96,33 @@ host: 04_space_tags.cpp 01_managed_pool_stdpar.cpp 02_device_pool_stdpar.cpp com
 	$(CXX) $(STD) $(OPT) -w $(HOSTFLAGS) 02_device_pool_stdpar.cpp -o $(BIN)/s02_host
 	@echo; $(BIN)/s04_host; $(BIN)/s01_host 512 50; $(BIN)/s02_host 512 50
 
+# ── 05 / 05b: SYCL on Aurora (PVC). Third backend = the honest test of the seam. ──
+#    JIT by default (simplest). For ahead-of-time on PVC, which is what ALCF
+#    generally recommends to avoid startup JIT cost:
+#        make s05 SYCL_TARGET='-fsycl-targets=spir64_gen -Xs "-device pvc"'
+ICPX        ?= icpx
+SYCL_TARGET ?=
+PSTL_OFFLOAD ?= -fsycl-pstl-offload=gpu
+
+s05: $(BIN)/s05
+$(BIN)/s05: 05_sycl_native.cpp common.hpp
+	$(ICPX) $(STD) $(OPT) -fsycl $(SYCL_TARGET) -DTC_SPIKE_SYCL $< -o $@
+
+# The PSTL-offload flag may not exist / may be spelled differently under this
+# icpx. A build failure here IS the answer, so do not let it kill the run.
+s05b: $(BIN)/s05b
+$(BIN)/s05b: 05b_sycl_stdpar.cpp common.hpp
+	-$(ICPX) $(STD) $(OPT) -fsycl $(PSTL_OFFLOAD) $(SYCL_TARGET) \
+	    -DTC_SPIKE_SYCL $< -o $@ 2>&1 | tee $(BIN)/s05b_build.log
+
+.PHONY: sycl
+sycl: s05 s05b
+	@echo; echo "################ spike 05 (native SYCL) ##########"
+	@-test -x $(BIN)/s05  && $(BIN)/s05  $(N) $(ITERS) || echo "  (s05 did not build)"
+	@echo;  echo "################ spike 05b (stdpar) ##############"
+	@-test -x $(BIN)/s05b && $(BIN)/s05b $(N) $(ITERS) || \
+	   echo "  (s05b did not build — see $(BIN)/s05b_build.log; that is a RESULT)"
+
 all: s04 s01 s02 s03 s03b
 
 run: all

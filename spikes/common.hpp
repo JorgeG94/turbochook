@@ -24,6 +24,8 @@
 
 #if defined(TC_SPIKE_CUDA)
 #include <cuda_runtime.h>
+#elif defined(TC_SPIKE_SYCL)
+#include <sycl/sycl.hpp>
 #endif
 
 namespace tc {
@@ -160,6 +162,73 @@ inline void report_device() {
     std::printf("  concurrentManaged : %d\n", pr.concurrentManagedAccess);
     std::printf("  pageableMemAccess : %d   <-- 1 => COHERENT (Grace-Hopper class)\n",
                 pr.pageableMemoryAccess);
+}
+
+#elif defined(TC_SPIKE_SYCL)
+// =============================================================================
+// SYCL / Level Zero (Aurora, PVC). The SAME four pool strategies, and the same
+// staging verbs — which is the point: if the abstraction only spanned CUDA and
+// HIP it would have proven nothing (hipify is essentially textual). SYCL is the
+// first genuinely different backend.
+//
+// THE CONTEXT is the structural difference. CUDA has an implicit default stream,
+// so `cudaMalloc(&p, n)` needs no context argument. SYCL's malloc_device and
+// parallel_for BOTH require a queue. Designing the device layer CUDA-first and
+// threading a queue through later would touch every call site — so the queue
+// exists here from the start, and CUDA/HIP simply ignore theirs.
+// =============================================================================
+inline sycl::queue& q() {
+    static sycl::queue queue{sycl::gpu_selector_v};
+    return queue;
+}
+
+inline Real* pool_managed_prefetched(std::size_t bytes, int = 0) {
+    Real* p = sycl::malloc_shared<Real>(bytes / sizeof(Real), q());
+    q().prefetch(p, bytes).wait();          // the malloc_shared twin of cudaMemPrefetchAsync
+    return p;
+}
+inline Real* pool_managed_plain(std::size_t bytes) {
+    return sycl::malloc_shared<Real>(bytes / sizeof(Real), q());
+}
+inline Real* pool_device(std::size_t bytes) {          // strict: host cannot deref
+    return sycl::malloc_device<Real>(bytes / sizeof(Real), q());
+}
+inline void pool_free(Real* p) { sycl::free(p, q()); }
+
+inline void stage_to_host(Real* dst, const Real* src, std::size_t bytes) {
+    q().memcpy(dst, src, bytes).wait();
+}
+inline void stage_to_device(Real* dst, const Real* src, std::size_t bytes) {
+    q().memcpy(dst, src, bytes).wait();
+}
+inline void device_sync() { q().wait(); }
+
+inline void report_device() {
+    const auto d = q().get_device();
+    std::printf("  device            : %s\n", d.get_info<sycl::info::device::name>().c_str());
+    std::printf("  vendor            : %s\n", d.get_info<sycl::info::device::vendor>().c_str());
+    std::printf("  compute units     : %u\n", d.get_info<sycl::info::device::max_compute_units>());
+    // TILE HIERARCHY. A PVC Max 1550 is a 2-TILE part. If `visible gpus` is 6 on
+    // an Aurora node the hierarchy is COMPOSITE (a device == a whole card, tiles
+    // are sub-devices); 12 would mean FLAT (a device == one tile). This decides
+    // what "one rank, one device" means later, and it is governed by
+    // ZE_FLAT_DEVICE_HIERARCHY — the Aurora twin of the CUDA_VISIBLE_DEVICES
+    // pinning trap. Measure it, do not assume it.
+    std::printf("  visible gpus      : %zu\n",
+                sycl::device::get_devices(sycl::info::device_type::gpu).size());
+    std::printf("  max sub-devices   : %u   <-- 2 => tiles hidden behind one device (COMPOSITE)\n",
+                d.get_info<sycl::info::device::partition_max_sub_devices>());
+    std::printf("  global mem        : %.1f GiB\n",
+                double(d.get_info<sycl::info::device::global_mem_size>()) / (1024.0 * 1024 * 1024));
+    std::printf("  usm_device_alloc  : %d\n", int(d.has(sycl::aspect::usm_device_allocations)));
+    std::printf("  usm_shared_alloc  : %d\n", int(d.has(sycl::aspect::usm_shared_allocations)));
+    // The SYCL analogue of CUDA's pageableMemoryAccess: can the device reach
+    // ordinary malloc'd host memory? This is the portable form of the
+    // coherent-vs-discrete question, and running it on Intel is what proves
+    // `Caps::coherent` is a real abstraction rather than an NVIDIA concept
+    // wearing a portable name.
+    std::printf("  usm_system_alloc  : %d   <-- 1 => COHERENT (host malloc reachable)\n",
+                int(d.has(sycl::aspect::usm_system_allocations)));
 }
 
 #else  // host-only build: the pool is plain aligned memory, staging is a no-op.
