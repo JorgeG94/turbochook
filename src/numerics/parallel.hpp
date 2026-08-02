@@ -35,8 +35,15 @@ namespace tc {
 
 // The policy seam. `inline constexpr` so it's a single shared value with no ODR
 // fuss across TUs.
+//
+// NB: bind by REFERENCE, not by value. libstdc++ makes the policy objects
+// copyable, but libc++ (Apple Clang) marks their copy ctor `= delete`, so
+// `auto par = std::execution::seq` fails to compile there — a const reference to
+// the inline-constexpr policy object copies nothing and works on both stdlibs.
+// (On libc++ the host build also needs -fexperimental-library to expose the PSTL
+// policies at all; CMake adds it for Clang. See CMakeLists.txt, TC_STDPAR=off.)
 #if defined(TC_STDPAR_OFF)
-inline constexpr auto par = std::execution::seq;          // host build: no TBB needed
+inline constexpr const auto& par = std::execution::seq;   // host build: no TBB needed
 #else
 inline constexpr auto par = std::execution::par_unseq;    // gpu / multicore
 #endif

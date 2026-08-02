@@ -42,6 +42,14 @@ elseif(TC_STDPAR STREQUAL "multicore")
   target_link_options   (tc_flags INTERFACE -stdpar=multicore)
 else() # off → host serial; src/numerics/parallel.hpp picks std::execution::seq (no TBB dep)
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_OFF)
+  # libc++ (Apple Clang / LLVM Clang) gates the <execution> PSTL policies behind
+  # its experimental library — without this flag std::execution::seq is simply
+  # absent ("no member named 'seq'"). GNU libstdc++ ships them unconditionally
+  # and g++ rejects the flag, so scope it to Clang. Compile + link (PSTL runtime).
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(tc_flags INTERFACE -fexperimental-library)
+    target_link_options   (tc_flags INTERFACE -fexperimental-library)
+  endif()
 endif()
 
 # ── NetCDF output (optional; thin C-ABI bridge over libnetcdf-c, per the dep policy) ─
