@@ -77,11 +77,23 @@ static void report_toolchain() {
     std::printf("  compiler            : gcc %d.%d\n", __GNUC__, __GNUC_MINOR__);
 #endif
 #if defined(_GLIBCXX_RELEASE)
-    std::printf("  libstdc++ release   : %d   <-- needs >= 15 for <mdspan>\n", _GLIBCXX_RELEASE);
+    std::printf("  libstdc++ release   : %d\n", _GLIBCXX_RELEASE);
+#  if TC_SPIKE_STD_MDSPAN && _GLIBCXX_RELEASE < 15
+    std::printf("  ^^ NOTE: <mdspan> is present DESPITE libstdc++ %d, which has none.\n"
+                "     The COMPILER bundles its own header. So availability is a\n"
+                "     per-compiler question, not a libstdc++-version question --\n"
+                "     verified: nvc++ 26.3 over libstdc++ 11.\n", _GLIBCXX_RELEASE);
+#  elif !TC_SPIKE_STD_MDSPAN
+    std::printf("  ^^ and the compiler bundles none either. Fixes, cheapest first:\n"
+                "     (1) a newer toolchain module that bundles <mdspan>;\n"
+                "     (2) a libstdc++ >= 15 behind --gcc-toolchain / -gcc-name.\n");
+#  endif
 #elif defined(_LIBCPP_VERSION)
     std::printf("  libc++ version      : %d\n", _LIBCPP_VERSION);
 #endif
-    std::printf("  C++ standard        : %ld\n", (long)__cplusplus);
+    std::printf("  C++ standard        : %ld", (long)__cplusplus);
+    if (__cplusplus < 202302L) std::printf("   (pre-final C++23; nvc++ reports 202100)");
+    std::printf("\n");
 }
 
 #if TC_SPIKE_STD_MDSPAN
@@ -94,7 +106,11 @@ static void report_toolchain() {
 // `offset_` once at construction, so the hot path is one multiply-add per
 // dimension with NO subtraction -- identical in shape to layout_left.
 // =============================================================================
-struct layout_fortran {
+// `Check` is a template parameter so BOTH variants live in one binary and the
+// A/B is honest. On failure the mapping returns index 0 (memory-safe) and raises a
+// device-side flag; the branch cannot be elided because the return value differs.
+template <bool Check>
+struct layout_fortran_t {
     template <class Extents>
     class mapping {
         Extents ext_{};
@@ -105,7 +121,7 @@ struct layout_fortran {
         using extents_type = Extents;
         using index_type   = typename Extents::index_type;
         using rank_type    = typename Extents::rank_type;
-        using layout_type  = layout_fortran;
+        using layout_type  = layout_fortran_t<Check>;
 
         constexpr mapping() = default;
 
@@ -121,7 +137,11 @@ struct layout_fortran {
         }
 
         TC_KERNEL constexpr index_type operator()(Index i, Index j) const
-            requires (Extents::rank() == 2) { return offset_ + i + ld_ * j; }
+            requires (Extents::rank() == 2) {
+            if constexpr (Check)
+                if (i < lo_[0] || i > hi(0) || j < lo_[1] || j > hi(1)) return 0;
+            return offset_ + i + ld_ * j;
+        }
 
         TC_KERNEL constexpr index_type operator()(Index i, Index j, Index k) const
             requires (Extents::rank() == 3) {
@@ -166,11 +186,17 @@ struct layout_fortran {
 // Name the requirement instead of letting the call site fail. If a future layout
 // change breaks the contract, THIS fires, not a wall of overload-resolution noise.
 static_assert(std::is_invocable_r_v<Index,
-                  const layout_fortran::mapping<std::dextents<Index,2>>&, Index, Index>,
+                  const layout_fortran_t<false>::mapping<std::dextents<Index,2>>&, Index, Index>,
               "layout_fortran::mapping is not a valid mdspan layout mapping");
+static_assert(std::is_invocable_r_v<Index,
+                  const layout_fortran_t<true>::mapping<std::dextents<Index,2>>&, Index, Index>,
+              "layout_fortran_checked::mapping is not a valid mdspan layout mapping");
 
-template <class T, int Rank>
-using FView = std::mdspan<T, std::dextents<Index, Rank>, layout_fortran>;
+using layout_fortran         = layout_fortran_t<false>;
+using layout_fortran_checked = layout_fortran_t<true>;
+
+template <class T, int Rank, bool Check = false>
+using FView = std::mdspan<T, std::dextents<Index, Rank>, layout_fortran_t<Check>>;
 template <class T, int Rank>
 using LView = std::mdspan<T, std::dextents<Index, Rank>, std::layout_left>;
 
@@ -320,6 +346,27 @@ int main(int argc, char** argv) {
     }, true);
     tc::check(bad(pool, ncell) == 0, "D mdspan / FORTRAN BOUNDS   exact (lo=1-ng)");
 
+    // E — variant D with BOUNDS CHECKING ON. Same bounds, same kernel, same data.
+    //     This is the number that decides whether checks stay on in production.
+    const double sE = run_view(pool, N, ng, iters, [=](Real* p) {
+        const Index lo[2] = {1 - ng, 1 - ng};
+        return FView<Real,2,true>(p, layout_fortran_t<true>::mapping<std::dextents<Index,2>>(
+                                        std::dextents<Index,2>(ld, ld), lo, ld));
+    }, true);
+    tc::check(bad(pool, ncell) == 0, "E mdspan / BOUNDS CHECKED   exact");
+
+    // ...and prove the check actually fires, rather than being compiled away.
+    {
+        const Index lo[2] = {1 - ng, 1 - ng};
+        layout_fortran_t<true>::mapping<std::dextents<Index,2>> mc(
+            std::dextents<Index,2>(ld, ld), lo, ld);
+        layout_fortran_t<false>::mapping<std::dextents<Index,2>> mu(
+            std::dextents<Index,2>(ld, ld), lo, ld);
+        const Index way_out = N + 10 * ng;                 // far outside the halo
+        tc::check(mc(way_out, 1) == 0 && mu(way_out, 1) != 0,
+                  "  check FIRES out of bounds (and is absent when off)");
+    }
+
     // Control: re-run A last. If it disagrees with the first A, the machine drifted
     // and no ratio below is trustworthy.
     const double sA2 = run_raw(pool, N, ng, iters);
@@ -333,6 +380,8 @@ int main(int argc, char** argv) {
     std::printf("       D mdspan FORTRAN BOUNDS    %8.3f s   %8.2f GB/s   (%.3fx of A)\n",
                 sD, tc::gbs(iters,N,N,sD), sA/sD);
 
+    std::printf("       E mdspan BOUNDS CHECKED    %8.3f s   %8.2f GB/s   (%.3fx of D)\n",
+                sE, tc::gbs(iters,N,N,sE), sD/sE);
     std::printf("       A' raw pointer, re-run     %8.3f s   %8.2f GB/s   (control)\n",
                 sA2, tc::gbs(iters,N,N,sA2));
 
@@ -340,6 +389,10 @@ int main(int argc, char** argv) {
     std::printf("\n  control drift A vs A'      : %.1f%%   %s\n", 100.0*drift,
                 drift < 0.05 ? "-- stable, ratios are meaningful"
                              : "-- TOO LARGE, ignore every ratio above");
+    std::printf("\n  E/D is the COST OF ALWAYS-ON BOUNDS CHECKING. These kernels are\n"
+                "  bandwidth-bound (~84%% of DRAM peak in the reference model), so spare ALU\n"
+                "  is exactly what a bounds compare consumes -- if E/D is within the control\n"
+                "  drift, checks stay ON in production and OOB stops being silent.\n");
     std::printf("\n  B/C/D within a few %% of A => a custom layout is free, and\n"
                 "  `View<T,Rank> = std::mdspan<T, dextents, layout_fortran>` is the design.\n"
                 "  Variant D also proves the ghost-cell property: a[i-1,j] at i==1 reaches\n"
