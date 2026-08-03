@@ -66,10 +66,13 @@ $(BIN)/alpha_host: main.cpp device.hpp
 # ── nvidia: the combination spike 02 already proved; here as the control. ─────
 # mem:separate is the whole point -- NO managed memory, so a host-side execution
 # of the loop body would fault instead of quietly working.
+# `-cuda` is what makes the CUDA runtime API callable and links cudart. It is
+# NOT `-cudalib=cudart`: that flag selects MATH libraries (cublas, cufft,
+# cusolver...) and has no `cudart` value. Same invocation as spikes 01-03.
 nvidia: $(BIN)/alpha_nvidia
 $(BIN)/alpha_nvidia: main.cpp device.hpp
-	$(NVCXX) $(STD) $(OPT) -stdpar=gpu -gpu=$(ARCH),mem:separate \
-	  -DTC_BACKEND_CUDA main.cpp -o $@ -cudalib=cudart
+	$(NVCXX) $(STD) $(OPT) -stdpar=gpu -gpu=$(ARCH),mem:separate -cuda \
+	  -DTC_BACKEND_CUDA main.cpp -o $@
 	@echo "built $@ for $(ARCH)"
 
 # ── amd: THE UNKNOWN CELL. ───────────────────────────────────────────────────
