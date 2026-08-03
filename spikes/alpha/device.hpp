@@ -68,8 +68,16 @@
 // because it was never evidence about offload; it only proves the shape
 // compiles. A DEVICE backend without policies is a hard error: running the
 // spike serially there would report PASS while measuring nothing.
+// TC_FORCE_SERIAL is set by the Makefile when libstdc++ is present but TBB is
+// not: <execution> then COMPILES and fails to LINK, which is a worse failure
+// than not offering the policy at all.
 #if defined(TC_BACKEND_SYCL)
 #  define TC_PAR_NAME "oneDPL device_policy"
+#elif defined(TC_FORCE_SERIAL)
+#  if defined(TC_BACKEND_CUDA) || defined(TC_BACKEND_HIP)
+#    error "TC_FORCE_SERIAL on a GPU backend -- that would report PASS while measuring nothing"
+#  endif
+#  define TC_PAR_NAME "SERIAL FALLBACK (forced: no TBB for libstdc++ par_unseq)"
 #elif defined(__cpp_lib_parallel_algorithm) && __cpp_lib_parallel_algorithm >= 201603L
 #  define TC_HAS_PAR  1
 #  define TC_PAR_NAME "std::execution::par_unseq"

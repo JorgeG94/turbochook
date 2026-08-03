@@ -22,7 +22,9 @@ ifdef gfx
 $(error you passed gfx=$(gfx); the variable is GFX (upper case). Use: make amd GFX=$(gfx))
 endif
 
-ARCH   ?= cc80
+# V100 = cc70   A100 = cc80   H100/GH200 = cc90.  Passing the wrong one gives a
+# binary for the wrong card, so it is stated rather than silently defaulted.
+ARCH   ?= cc70
 GFX    ?= gfx90a
 NVCXX  ?= nvc++
 HIPCXX ?= hipcc
@@ -43,13 +45,23 @@ all: host
 
 # ── host: plain par_unseq over ordinary memory. Proves the shape compiles. ────
 # Not evidence about offload -- see the comment at the top of main.cpp.
+# libstdc++ implements par_unseq on TBB, so <execution> COMPILES and fails to
+# LINK when TBB is absent -- a worse failure than not offering the policy. Probe
+# for it once and fall back to a serial loop rather than emitting -ltbb blindly.
+HAVE_TBB := $(shell printf 'int main(){}' | $(CXX) -x c++ - -ltbb -o /dev/null >/dev/null 2>&1 && echo yes)
+ifeq ($(HAVE_TBB),yes)
+  HOST_LIBS ?= -ltbb
+  HOST_DEFS ?=
+else
+  HOST_LIBS ?=
+  HOST_DEFS ?= -DTC_FORCE_SERIAL
+endif
+
 host: $(BIN)/alpha_host
 $(BIN)/alpha_host: main.cpp device.hpp
-	$(CXX) $(STD) $(OPT) main.cpp -o $@ $(HOST_LIBS)
+	@[ "$(HAVE_TBB)" = yes ] || echo "note: no TBB found -> host build runs SERIAL (shape check only; unaffected by this)"
+	$(CXX) $(STD) $(OPT) $(HOST_DEFS) main.cpp -o $@ $(HOST_LIBS)
 	@echo "built $@"
-
-# libstdc++ par_unseq wants TBB. If your g++ does not, drop HOST_LIBS=.
-HOST_LIBS ?= -ltbb
 
 # ── nvidia: the combination spike 02 already proved; here as the control. ─────
 # mem:separate is the whole point -- NO managed memory, so a host-side execution
