@@ -1,4 +1,21 @@
 // =============================================================================
+// !!! THE `layout_fortran` IN THIS FILE IS THE REJECTED DESIGN. DO NOT COPY IT. !!!
+//
+// It is kept because it is the EVIDENCE for the rejection, not a template. A custom
+// layout with arbitrary lower bounds is NOT a conforming mdspan layout: the standard
+// fixes the index domain as [0, extent), and `mdspan::operator[]` asserts that BEFORE
+// consulting the layout. Verified here and independently:
+//     required_span_size() = 144   but   m(11,11) = 156
+//     v[1-ng, 1]  ->  SIGTRAP under _LIBCPP_HARDENING_MODE_FAST (a PRODUCTION tier)
+//
+// The shipping design is zero-based `std::mdspan<T, dextents<Index,R>, layout_left>`,
+// with the halo in the extents and the interior box in `Region`. The ghost-cell
+// property is unaffected: interior ng..ng+nx-1, and v[i-1,j] at i==ng reaches halo
+// cell ng-1 with no branch. See docs/design/ARRAY.md, which is authoritative.
+//
+// What IS still worth reading here: the toolchain-availability report, the warmup +
+// control-rerun timing discipline, and variants A/B as a zero-cost baseline.
+// =============================================================================
 // spike 06 — can `std::mdspan` with a CUSTOM LAYOUT be the kernel currency?
 //
 // THE DECISION THIS SETTLES: `View<T,Rank>` is either a real `std::mdspan` or a
