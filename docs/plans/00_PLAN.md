@@ -108,8 +108,13 @@ public:
 namespace tc::device {
 
 enum class Backend  { Serial, Multicore, Cuda, Hip, Sycl };
+
+// Regime is an ANNOTATION, not a dispatch input -- stdpar is the path and native
+// is an insertion at a named kernel, so there is no routine choice to make. The
+// byte+flop recorder checks the claim rather than trusting it. `Launcher::Auto` is
+// deleted; AB survives because it is how an insertion gets justified.
 enum class Regime   { MemoryBound, LaunchBound, RegisterBound };
-enum class Launcher { Auto, Stdpar, Native, AB };
+enum class Launcher { Stdpar, Native, AB };
 
 struct Stream;
 struct LaunchOpts { int workgroup = 0; Stream* stream = nullptr; };
