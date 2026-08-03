@@ -55,6 +55,40 @@ Because the pool is device-only and therefore **not host-dereferenceable**, corr
 alone proves offload: a host-side execution of the loop body could not have produced the
 right values. No timing inference is involved.
 
+### 0.0.1 What porting the existing tree to AMD and Intel actually cost
+
+Not a thought experiment — this was done, and it produced **two bugs of the same species
+in one afternoon**. Both were invisible while only NVIDIA was exercised. Both produced
+silent wrongness rather than an error.
+
+**1. The arena was a `std::vector<std::byte>`.** Ordinary host heap. It worked because
+`nvc++ -stdpar` silently promotes the whole heap to managed memory. `--hipstdpar` faulted
+(memory access fault); oneDPL failed outright. The header comment in the demo said the
+quiet part out loud — *"managed memory under nvc++ -stdpar"* — and that comment **was** the
+bug: an invariant that held by vendor favour, recorded as if it were a property of the
+code.
+
+**2. Allocation and launch used two different `sycl::queue`s.** USM is *context*-bound, so
+memory from `malloc_shared(q1)` is invalid in a kernel on `q2` unless they share a context
+— which two independently constructed queues need not. Every test that both allocated and
+launched could read the wrong memory **without crashing**, which is why the failures read
+as physics bugs.
+
+**Both are impossible by construction under the design in this document.** `Array<T, Rank,
+Space, Loc>` cannot be built from a `std::vector` — the arena is the only thing that hands
+one out, so "kernel-visible memory is device memory" stops being a convention someone can
+forget. And `Context` exists precisely so allocation and launch cannot drift apart;
+[`plans/02_DEVICE.md`](plans/02_DEVICE.md) already argued it was needed *"because of SYCL"*,
+and this is the failure that argument predicted.
+
+The wider lesson is sharper than either bug. `parameterizations`-style prose does not
+enforce anything: `diag/reduce.hpp` **documented** that `zonal_mean`'s output "must be
+device-accessible when the backend offloads", and the test passed it a `std::vector`
+anyway, for as long as one vendor made that harmless. **A second vendor is a correctness
+instrument, not a portability checkbox** — and the same run showed the two-layer baroclinic
+case producing identical numbers on NVIDIA, AMD and Intel, which is the only reason these
+were separable from genuine physics errors at all.
+
 ---
 
 ## 0. Precision is a parameter, not a typedef

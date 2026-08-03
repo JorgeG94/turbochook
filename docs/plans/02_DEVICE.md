@@ -103,6 +103,15 @@ not planned.
 2. **Context.** A queue on SYCL, a stream on CUDA/HIP, nothing on host. Exists
    *because* of SYCL — `sycl::malloc_device` and `q.parallel_for` both need it, CUDA
    lets you cheat, and threading it through later touches every call site.
+
+   **This is no longer a prediction.** Porting the existing tree to Intel produced
+   exactly the failure: allocation used one `sycl::queue`, launch used another, and
+   SYCL USM is **context-bound** — `malloc_shared(q1)` memory is invalid in a kernel
+   on `q2` unless the two share a context, which independently constructed queues need
+   not. Every routine that both allocated and launched could touch the wrong memory
+   **without crashing**. So `Context` is not a portability nicety: allocation and
+   launch sharing one is a *correctness* requirement, and the type system should make
+   two of them impossible rather than merely unusual.
 3. **`initialize(device)` — the two hardware traps, encoded in the API:**
    - **Intel: select ONE TILE, never a COMPOSITE root device.** Measured **6.3×**
      (392 → 2479 GB/s). Query `partition_max_sub_devices`; if the selected device
