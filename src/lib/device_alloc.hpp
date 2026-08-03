@@ -27,8 +27,10 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
 #include <cstdio>
 #include <new>
+#include "lib/gpu_assert.hpp"
 
 // Keyed on the EXPLICIT backend define from CMake, never on a compiler macro.
 // __NVCOMPILER is also true for -stdpar=multicore, which has no GPU and must take
@@ -74,21 +76,32 @@ inline sycl::queue& device_queue() {
 }
 #endif
 
-// Managed/shared bytes, host- AND device-addressable. Returns nullptr on failure;
-// the caller reports, because it knows the requested size.
+// Managed/shared bytes, host- AND device-addressable.
+//
+// THROWS on failure, naming the call and the driver's own message -- the previous
+// version collapsed every failure to a nullptr, so "out of memory" and "invalid
+// device" were indistinguishable by the time the arena saw them.
 inline void* managed_alloc(std::size_t bytes) {
     if (bytes == 0) return nullptr;
 #if   defined(TC_STDPAR_SYCL)
-    return sycl::malloc_shared(bytes, device_queue());
+    // USM allocation reports failure by returning nullptr rather than throwing,
+    // so it needs its own check -- TC_GPU_CHECK is for return-code runtimes.
+    void* p = sycl::malloc_shared(bytes, device_queue());
+    if (!p)
+        fail(Errc::out_of_memory,
+             "sycl::malloc_shared failed for " + std::to_string(bytes) + " bytes");
+    return p;
 #elif defined(TC_STDPAR_HIP)
     void* p = nullptr;
-    return (hipMallocManaged(&p, bytes) == hipSuccess) ? p : nullptr;
+    TC_GPU_CHECK(hipMallocManaged(&p, bytes));   // throws, naming the call + code
+    return p;
 #elif defined(TC_STDPAR_CUDA)
     // nvc++ -stdpar would promote a plain heap allocation anyway; going through
     // cudaMallocManaged makes that EXPLICIT rather than a compiler favour, and
     // keeps all four backends on the same code path.
     void* p = nullptr;
-    return (cudaMallocManaged(&p, bytes) == cudaSuccess) ? p : nullptr;
+    TC_GPU_CHECK(cudaMallocManaged(&p, bytes));
+    return p;
 #else
     // Host build: ordinary aligned memory. 128 B to match the arena's field
     // alignment so the very first field starts aligned too.
@@ -100,11 +113,21 @@ inline void* managed_alloc(std::size_t bytes) {
 inline void managed_free(void* p) noexcept {
     if (!p) return;
 #if   defined(TC_STDPAR_SYCL)
-    sycl::free(p, device_queue());
+    // sycl::free THROWS on error, and this runs from ~Arena, which is
+    // noexcept(true) -- an escaping exception here is std::terminate. Swallow and
+    // log, exactly as the CUDA/HIP paths do via TC_GPU_CHECK_NOTHROW.
+    try {
+        sycl::free(p, device_queue());
+    } catch (const std::exception& e) {
+        try { logger().error("sycl::free failed: {}", e.what()); } catch (...) {}
+    } catch (...) {}
 #elif defined(TC_STDPAR_HIP)
-    hipFree(p);
+    // NOTHROW: managed_free runs from ~Arena, and a destructor is noexcept(true).
+    // It also silences the "ignoring return value of hipFree" warning honestly --
+    // by CHECKING the code, not by casting it to void.
+    TC_GPU_CHECK_NOTHROW(hipFree(p));
 #elif defined(TC_STDPAR_CUDA)
-    cudaFree(p);
+    TC_GPU_CHECK_NOTHROW(cudaFree(p));
 #else
     std::free(p);
 #endif

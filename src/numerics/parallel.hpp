@@ -40,6 +40,7 @@
 #  include <numeric>
 #endif
 #include "core/types.hpp"
+#include "lib/error.hpp"
 #include "lib/device_alloc.hpp"   // THE queue: USM is context-bound, so allocation
                                    // and launch must share one (see that header)
 
@@ -129,16 +130,26 @@ T do_reduce(Index count, T init, Binop binop, Unary unary) {
     // what every caller already passes.
     auto& q = detail::device_queue();
     if (count <= 0) return init;
-    T* res = sycl::malloc_shared<T>(1, q);
-    if (!res) return init;
+
+    // ONE scratch cell per result type, allocated once. A malloc_shared per call
+    // would run at every diagnostic; and the earlier `if (!res) return init;`
+    // was worse than unchecked -- an allocation failure silently returned the
+    // IDENTITY, so a failed reduction reported a mass of zero as if it were
+    // physics.
+    static T* res = [&] {
+        T* r = sycl::malloc_shared<T>(1, q);
+        if (!r) fail(Errc::out_of_memory, "sycl::malloc_shared failed for the reduction scratch");
+        return r;
+    }();
+
     *res = init;
     q.parallel_for(sycl::range<1>(std::size_t(count)),
                    sycl::reduction(res, init, binop),
                    [=](sycl::id<1> it, auto& acc) { acc.combine(unary(Index(it[0]))); })
      .wait();
-    const T out = *res;
-    sycl::free(res, q);
-    return out;
+    return *res;                       // deliberately not freed: one cell per type,
+                                       // released with the process, and freeing it
+                                       // at exit would race the queue's teardown
 #else
     auto ids = std::views::iota(Index{0}, count);
     return std::transform_reduce(par, ids.begin(), ids.end(), init, binop, unary);
