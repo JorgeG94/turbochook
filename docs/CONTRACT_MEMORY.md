@@ -18,6 +18,42 @@ Within that layer, one boundary matters most:
 Every design choice below is either a measured result from [`../spikes/`](../spikes/)
 or a direct consequence of one. Nothing here is aspirational.
 
+## 0.0 The thesis
+
+Three lines the rest of this document follows from:
+
+1. **Parallelism is the language's job.** One shape, `device::do_concurrent`. The
+   per-backend dialects live inside it and nowhere else — fifty kernels, one file that
+   knows a backend exists.
+2. **Memory is ours.** Explicit device allocation, one sealed arena, **no managed memory
+   and no implicit migration** — because that is precisely what stdpar gets wrong, and
+   what the first-touch penalties (4.1x V100 / 15.4x PVC) measure.
+3. **Native kernels insert, they do not replace.** Registered per kernel, on profile
+   evidence, verified bit-identical against the stdpar path.
+
+The split is principled rather than a compromise: it takes stdpar where it is strongest
+(flat data-parallel execution, and improving) and rejects it where it is weakest
+(implicit allocation and migration).
+
+**Measured on all three vendors** — `spikes/alpha` runs one `#ifdef`-free `main.cpp`
+over pointers from `cudaMalloc` / `hipMalloc` / `sycl::malloc_device`:
+
+| toolchain | result |
+|---|---|
+| `nvc++ -stdpar=gpu -gpu=mem:separate` (cc90) | PASS |
+| `hipcc --hipstdpar` | PASS |
+| `icpx -fsycl` + oneDPL | PASS |
+
+The AMD cell was the one in genuine doubt — `--hipstdpar` leans on HMM/XNACK to make
+*ordinary host* allocations device-reachable, so its design assumption is that you did
+not hand-manage memory. It accepts `hipMalloc`'d pointers anyway, which means the arena
+composes with it and *"CUDA is basically HIP"* extends to the stdpar path, not just to
+`__global__` kernels.
+
+Because the pool is device-only and therefore **not host-dereferenceable**, correctness
+alone proves offload: a host-side execution of the loop body could not have produced the
+right values. No timing inference is involved.
+
 ---
 
 ## 0. Precision is a parameter, not a typedef

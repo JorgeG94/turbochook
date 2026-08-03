@@ -9,18 +9,22 @@ That is the thesis the whole design rests on: *the language expresses parallelis
 we express memory, native kernels insert rather than replace.* Two thirds of the
 matrix are already proven; one cell is not.
 
-| toolchain | allocator | status |
+| toolchain | allocator | result |
 |---|---|---|
-| `nvc++ -stdpar=gpu -gpu=mem:separate` | `cudaMalloc` | proven — spike 02 |
-| `icpx -fsycl` + oneDPL | `sycl::malloc_device` | proven — spike 05 |
-| **`hipcc --hipstdpar`** | **`hipMalloc`** | **UNKNOWN — this spike** |
+| `nvc++ -stdpar=gpu -gpu=mem:separate`, cc90 | `cudaMalloc` | **PASS** |
+| `hipcc --hipstdpar` | `hipMalloc` | **PASS** |
+| `icpx -fsycl` + oneDPL | `sycl::malloc_device` | **PASS** |
+| cc70 (V100) | `cudaMalloc` | pending — environment, not design |
 
-**"CUDA is basically HIP" is true for `__global__` kernels and does not transfer
-here.** `--hipstdpar` is a different mechanism: it leans on HMM/XNACK to make
-*ordinary host allocations* device-reachable, so its design assumption is that you
-did **not** hand-manage memory. If it turns out to require interposing `malloc`,
-the arena fights it rather than composing with it — and that is worth knowing
-before HIP is assumed free.
+**Answered: yes, on all three vendors.** The AMD cell was the one in genuine doubt.
+`--hipstdpar` is not hipified CUDA — it leans on HMM/XNACK to make *ordinary host
+allocations* device-reachable, so its design assumption is that you did **not**
+hand-manage memory. Had it required interposing `malloc`, the arena would have
+been fighting it rather than composing with it, and AMD would have needed the
+native insertion path for everything rather than selectively. It does not.
+
+So *"CUDA is basically HIP"* now extends to the **stdpar** path and not just to
+`__global__` kernels, which was not a safe assumption before this ran.
 
 ## Run
 
