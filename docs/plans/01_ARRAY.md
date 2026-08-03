@@ -37,17 +37,17 @@ Contract: [`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0–§1.
 ## Files
 
 ```
-src/core/view.hpp         View alias + the <mdspan> fallback shim
-src/core/array.hpp        Array, HostArray, mirror(), copy(), debug_snapshot/peek
-src/core/slice.hpp        window, layer, tracer, ColumnView, column()
-src/core/vector_field.hpp Stagger, VectorField<A|B|C>, CVector2, CVector3
+src/lib/core/view.hpp         View alias + the <mdspan> fallback shim
+src/lib/core/array.hpp        Array, HostArray, mirror(), copy(), debug_snapshot/peek
+src/lib/core/slice.hpp        window, layer, tracer, ColumnView, column()
+src/lib/core/vector_field.hpp Stagger, VectorField<A|B|C>, CVector2, CVector3
 tests/test_core_array.cpp
 ```
 
 `types.hpp` and `space.hpp` — and with them `Index`, `Space`, `Loc`, `DType`, `Init`,
 `MemoryQuantity` and both predicates — belong to [`00_VOCAB.md`](00_VOCAB.md), along with
 the two collisions they carry (the existing 125-line `types.hpp`, and `tc::Loc` already
-living in `src/mesh/mesh.hpp:28` with 266 use sites).
+living in `src/ocean_lib/mesh/mesh.hpp:28` with 266 use sites).
 
 **One collision is this workstream's own:** **`TC_KERNEL` is claimed by both this plan and
 02**, and exists under `src/` in neither (only `spikes/common.hpp:36`). **02 owns it** — it

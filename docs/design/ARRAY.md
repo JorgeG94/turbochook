@@ -268,8 +268,8 @@ Closing it in the type system would mean returning a distinct `DeviceView` that 
 `mdspan`, which forfeits the trivially-copyable-into-kernels property that is the whole
 reason `View` is an `mdspan`. That trade is not worth it. So the hole is closed by
 **naming and lint** instead: the accessor is `kernel_view()`, which reads wrong at a host
-call site, and a pre-commit hook rejects `kernel_view()` outside `src/physics/` kernel
-bodies and `src/device/` — the same grep-bannable enforcement §5.1 already applies to
+call site, and a pre-commit hook rejects `kernel_view()` outside `src/ocean_physics/` kernel
+bodies and `src/lib/device/` — the same grep-bannable enforcement §5.1 already applies to
 `debug_`.
 
 Stating it here matters more than the mechanism: a gate advertised as airtight and known
@@ -460,7 +460,7 @@ T debug_peek(const Array<T,R,S,L>&, auto... idx);    // one element, one full sy
 
 `HostArray` is a distinct owning type precisely because `Array` owns nothing. Both
 escapes allocate, transfer and synchronise, and both are **named to be grep-bannable** —
-a pre-commit hook rejecting `debug_` under `src/physics/` costs one line and prevents the
+a pre-commit hook rejecting `debug_` under `src/ocean_physics/` costs one line and prevents the
 stray per-step host touch that is worth 4× on V100 and 15× on PVC.
 
 We deliberately do **not** build an auto-syncing shadow-copy debug mode. It hides exactly

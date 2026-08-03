@@ -144,14 +144,23 @@ without its extra face compiles and then makes the exchange silently wrong.
 
 ## 3. Workstreams and dependencies
 
+The source tree and its one-way dependency rule are
+[`../CONTRACT_LAYERS.md`](../CONTRACT_LAYERS.md); every workstream below lands inside
+`src/lib/` except 05.
+
 ```
         ┌──────────────────────────────┐
-        │ 01 ARRAY   (the keystone)    │  freeze first — ~1 day
+        │ 00 VOCAB  (MemoryQuantity,   │  build FIRST — the only workstream
+        │  types, Space/Loc, assert)   │  with no unresolved blocker
+        └──────────────┬───────────────┘
+                       ▼
+        ┌──────────────────────────────┐
+        │ 01 ARRAY   (the keystone)    │  the freeze — steps 1-4
         └──────────────┬───────────────┘
      ┌─────────┬───────┴────────┬──────────────┐
      ▼         ▼                ▼              ▼
  02 DEVICE  03 ARENA        04 COMM        05 API
- (no deps)  (needs 02       (needs 01,02)  (needs 01,03)
+ (needs 00) (needs 01,02    (needs 01,02)  (needs 01,03)
              alloc sig)
      └─────────┴────────────────┴──────────────┘
                         ▼
@@ -162,14 +171,22 @@ without its extra face compiles and then makes the exchange silently wrong.
 
 | # | workstream | depends on | plan |
 |---|---|---|---|
-| 01 | Array / View / Space / Loc | — | [`01_ARRAY.md`](01_ARRAY.md) |
-| 02 | Device manager | — | [`02_DEVICE.md`](02_DEVICE.md) |
+| 00 | Vocabulary + `MemoryQuantity` | — | [`00_VOCAB.md`](00_VOCAB.md) |
+| 01 | Array / View / slice | 00 | [`01_ARRAY.md`](01_ARRAY.md) |
+| 02 | Device manager | 00 | [`02_DEVICE.md`](02_DEVICE.md) |
 | 03 | Arena (memory stack) | 01 sig, 02 alloc sig | [`03_ARENA.md`](03_ARENA.md) |
 | 04 | Comm / MPI wrapper | 01 sig, 02 | [`04_COMM.md`](04_COMM.md) |
 | 05 | Python API | 01 sig, 03 | [`05_API.md`](05_API.md) |
 
-02 has **no dependencies at all** and its test suite already exists (the five spikes),
-so it can start immediately and in parallel with the 01 freeze.
+**00 is the first thing to build**, and specifically `MemoryQuantity` within it. It is the
+only piece of the corpus with nothing to resolve first: `Arena` is constructed from one,
+`DeviceAllocation` takes one, `Array::bytes()` returns one and `MemoryRequirement` sums
+them — so 01/02/03 all need it and none can supply it. It also depends on no toolchain
+feature at all (no `<mdspan>`, no CUDA, no MPI), which makes it buildable and fully
+property-testable on the mac dev box.
+
+02 depends only on 00, and its test suite already exists (the five spikes), so it runs in
+parallel with the 01 freeze.
 
 ---
 

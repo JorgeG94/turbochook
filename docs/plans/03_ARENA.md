@@ -14,8 +14,8 @@ One pool, allocated once at startup, **sealed** after init, never grown. Hands o
 fields, an RAII stack above the high-water line for per-step scratch.
 
 ```
-src/core/arena.hpp        Arena, ScratchScope
-src/core/mem_report.hpp   per-label accounting
+src/lib/memory/arena.hpp        Arena, ScratchScope
+src/lib/memory/mem_report.hpp   per-label accounting
 tests/test_arena.cpp
 ```
 

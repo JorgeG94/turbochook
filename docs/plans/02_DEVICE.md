@@ -13,12 +13,12 @@ The **only** backend-aware code in the tree. Allocation, context, launch, reduce
 capability query. Nothing else — no physics, no arrays, no Python.
 
 ```
-src/device/backend.hpp     Backend tag, TC_KERNEL, Regime/Launcher/KernelTag
-src/device/context.hpp     Context (stream/queue), initialize/finalize/sync
-src/device/alloc.hpp       malloc_device/malloc_shared/free/memcpy/prefetch
-src/device/launch.hpp      do_concurrent, reduce, Region, LaunchOpts, GraphScope
-src/device/native.cu       __global__ trampolines + TC_REGISTER_NATIVE (nvcc)
-src/device/native.sycl.cpp native SYCL launcher (icpx)
+src/lib/device/backend.hpp     Backend tag, TC_KERNEL, Regime/Launcher/KernelTag
+src/lib/device/context.hpp     Context (stream/queue), initialize/finalize/sync
+src/lib/device/alloc.hpp       malloc_device/malloc_shared/free/memcpy/prefetch
+src/lib/device/launch.hpp      do_concurrent, reduce, Region, LaunchOpts, GraphScope
+src/lib/device/native.cu       __global__ trampolines + TC_REGISTER_NATIVE (nvcc)
+src/lib/device/native.sycl.cpp native SYCL launcher (icpx)
 tests/test_device.cpp
 ```
 

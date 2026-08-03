@@ -3,7 +3,8 @@
 **Depends on: nothing at all.** No `<mdspan>`, no CUDA, no MPI, no `Mesh`.
 **Blocks: 01, 02, 03, 04, 05** — every one of them.
 
-Contract: [`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0, §1.6–§1.7.
+Contracts: [`../CONTRACT_LAYERS.md`](../CONTRACT_LAYERS.md) (where this lives and why) ·
+[`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0, §1.6–§1.7.
 
 > **Why this exists as its own workstream.** The plan had `Array` at the bottom. It
 > isn't. `Array::bytes()` returns a `MemoryQuantity`; `Arena` is *constructed* from one;
@@ -21,16 +22,27 @@ Contract: [`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0, §1.6–§1.7.
 ## Scope
 
 ```
-src/core/quantity.hpp     MemoryQuantity, Alignment, the unit machinery it needs
-src/core/types.hpp        Index, GlobalIndex, Real, is_scalar_type, Scalar, DType, dtype_of
-src/core/space.hpp        Space, Loc, Parity, host_subscriptable, mirror_is_identity, Init
-src/core/assert.hpp       TC_ASSERT / TC_THROW + the exception types
+src/lib/core/quantity.hpp     MemoryQuantity, Alignment, the unit machinery it needs
+src/lib/core/types.hpp        Index, GlobalIndex, Real, is_scalar_type, Scalar, DType, dtype_of
+src/lib/core/space.hpp        Space, Loc, Parity, host_subscriptable, mirror_is_identity, Init
+src/lib/core/assert.hpp       TC_ASSERT / TC_THROW + the exception types
+src/lib/constants.hpp         g, rho0, omega, R_earth, ... -- physical constants
+src/lib/logging/logger.hpp    levels, rank-aware, leader_only
 tests/test_core_vocab.cpp
 ```
 
 Everything here is a **value type or a compile-time predicate**. Nothing allocates,
 nothing launches, nothing touches a backend. That is the entry criterion for living at
 this level, and it is what makes the whole layer property-testable.
+
+**`constants.hpp` and `logging/` are here because nothing else can host them.** Both are
+needed by every layer above, neither depends on anything, and leaving them unassigned is
+how `g = 9.81` ends up redefined in four kernels and how the no-`printf` rule ends up with
+nowhere for output to go. The logger is deliberately small — levels, a rank prefix, and
+`leader_only` — because unordered output from N ranks is unreadable and genuinely
+*ordered* output needs serialisation, which is a debug-only luxury. It takes the rank as
+an `int` at construction rather than including anything from `lib/comm/`, so it stays
+dependency-free.
 
 ## `MemoryQuantity`
 
@@ -92,7 +104,7 @@ bug rakali actually shipped:
 3. **`space.hpp`.** `Space`, `Loc`, `Parity`, `Init`, and the **two** predicates —
    `host_subscriptable` (strict always: portability discipline) and `mirror_is_identity`
    (tracks the hardware). They answer different questions and must not be collapsed.
-   **`Loc` and `Parity` currently live in `src/mesh/mesh.hpp:28`** with 266 use sites.
+   **`Loc` and `Parity` currently live in `src/ocean_lib/mesh/mesh.hpp:28`** with 266 use sites.
    Move them here, along with `x_staggered`/`y_staggered`, and have `mesh.hpp` include
    this. A second definition in namespace `tc` is a hard redefinition error the moment
    one TU sees both, which is immediately.

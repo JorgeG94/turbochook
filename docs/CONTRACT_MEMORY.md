@@ -1,10 +1,16 @@
 # The memory & device contract
 
-Everything is built on this. Two layers, one boundary:
+This contract governs `src/lib/` — the bottom layer of
+[`CONTRACT_LAYERS.md`](CONTRACT_LAYERS.md), which is where the source tree and its
+one-way dependency rule are defined. Everything here is domain-agnostic: it knows about
+bytes, devices, ranks and arrays, and nothing about the ocean.
+
+Within that layer, one boundary matters most:
 
 ```
-  device/   the ONLY backend-aware code. Allocation + launch. Nothing else.
-  core/     Space · Loc · View (std::mdspan) · Array · Arena · mirror
+  lib/device/   the ONLY backend-aware code. Allocation + launch. Nothing else.
+  lib/memory/   MemoryQuantity · MemoryRequirement · Arena · ScratchScope
+  lib/core/     Space · Loc · View (std::mdspan) · Array · mirror
   ─────────────────────────────────────────────────────────────
   a kernel receives ONLY a trivially-copyable View + POD, by value
 ```

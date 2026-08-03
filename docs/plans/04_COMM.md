@@ -5,7 +5,7 @@
 Contract: [`../CONTRACT_RUNTIME.md`](../CONTRACT_RUNTIME.md) §8.
 
 The rule, borrowed from rakali and worth a pre-commit hook: **MPI appears nowhere
-outside `src/comm/`, and no operator learns that it exists.** The decomposition
+outside `src/lib/comm/`, and no operator learns that it exists.** The decomposition
 changes the *work region*, not the kernel.
 
 ---
@@ -13,12 +13,12 @@ changes the *work region*, not the kernel.
 ## Scope
 
 ```
-src/comm/comm.hpp          the facade every other file sees
-src/comm/decomp.hpp        Decomp: local/global extents, offsets, neighbours
-src/comm/exchange.hpp      grouped halo exchange; Loc from the type, Parity at registration
-src/comm/collective.hpp    all_reduce, incl. the reproducible mode
-src/comm/mpi/*.cpp         real backend
-src/comm/single/*.cpp      serial backend — the DEFAULT, and complete
+src/lib/comm/comm.hpp          the facade every other file sees
+src/lib/comm/decomp.hpp        Decomp: local/global extents, offsets, neighbours
+src/lib/comm/exchange.hpp      grouped halo exchange; Loc from the type, Parity at registration
+src/lib/comm/collective.hpp    all_reduce, incl. the reproducible mode
+src/lib/comm/mpi/*.cpp         real backend
+src/lib/comm/single/*.cpp      serial backend — the DEFAULT, and complete
 tests/test_comm.cpp
 ```
 
@@ -107,7 +107,7 @@ tests/test_comm.cpp
   mass drift, and KE within the bit-identity bar — this is the real gate; the unit
   tests only localise failures.
 - The reproducible sum is **bitwise identical across rank counts**.
-- No `mpi.h` include outside `src/comm/` (enforce with a pre-commit hook).
+- No `mpi.h` include outside `src/lib/comm/` (enforce with a pre-commit hook).
 - CI passes with the `single/` backend and no MPI installed.
 
 ## Deferred
