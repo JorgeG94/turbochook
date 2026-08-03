@@ -15,12 +15,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ── stdpar backend selection ─────────────────────────────────────────────────
-#   gpu       : nvc++  -stdpar=gpu       (offload; managed memory by default)
+#   gpu       : nvc++  -stdpar=gpu       (NVIDIA offload)
 #   multicore : nvc++  -stdpar=multicore (CPU threads)
+#   hip       : hipcc  --hipstdpar       (AMD offload)
+#   sycl      : icpx   -fsycl + oneDPL   (Intel offload)
 #   off       : g++/clang, host-serial   (par_unseq → seq via TC_STDPAR_OFF; no TBB)
-set(TC_STDPAR "off" CACHE STRING "stdpar backend: gpu | multicore | off")
-set_property(CACHE TC_STDPAR PROPERTY STRINGS gpu multicore off)
+#
+# All five run the SAME source: every parallel loop goes through
+# tc::do_concurrent (src/numerics/parallel.hpp), which is the only place a
+# backend dialect appears. Verified end to end by spikes/alpha on cc70, cc90,
+# hipstdpar and oneDPL -- see docs/CONTRACT_MEMORY.md §0.0.
+set(TC_STDPAR "off" CACHE STRING "stdpar backend: gpu | multicore | hip | sycl | off")
+set_property(CACHE TC_STDPAR PROPERTY STRINGS gpu multicore hip sycl off)
 set(TC_GPU_ARCH "cc70" CACHE STRING "GPU arch for nvc++ (cc70 | cc80 | cc90)")
+set(TC_AMD_ARCH "gfx90a" CACHE STRING "GPU arch for hipcc (gfx90a | gfx942 | ...)")
 
 # One INTERFACE target carries flags + include path + defines to everything.
 add_library(tc_flags INTERFACE)
@@ -40,6 +48,37 @@ elseif(TC_STDPAR STREQUAL "multicore")
   endif()
   target_compile_options(tc_flags INTERFACE -stdpar=multicore)
   target_link_options   (tc_flags INTERFACE -stdpar=multicore)
+
+elseif(TC_STDPAR STREQUAL "hip")
+  # AMD. --hipstdpar routes std::execution::par_unseq through rocThrust. Verified
+  # by spikes/alpha to accept explicitly hipMalloc'd device pointers -- which was
+  # NOT a safe assumption, since hipstdpar's design leans on HMM/XNACK to make
+  # ORDINARY HOST allocations device-reachable. Some configurations still want
+  # HSA_XNACK=1 in the environment.
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR
+      "TC_STDPAR=hip needs hipcc (a Clang derivative); got ${CMAKE_CXX_COMPILER_ID}.\n"
+      "  cmake -B build_hip -DCMAKE_CXX_COMPILER=hipcc -DTC_STDPAR=hip -DTC_AMD_ARCH=gfx90a")
+  endif()
+  target_compile_options(tc_flags INTERFACE --hipstdpar --offload-arch=${TC_AMD_ARCH})
+  target_link_options   (tc_flags INTERFACE --hipstdpar --offload-arch=${TC_AMD_ARCH})
+
+elseif(TC_STDPAR STREQUAL "sycl")
+  # Intel. oneDPL supplies the parallel algorithms; note the deliberate absence of
+  # -fsycl-pstl-offload, measured to double binary size for no gain (spike 05).
+  #
+  # This build is only possible because no loop uses std::views::iota any more:
+  # oneDPL REJECTS it as a read-only proxy iterator. tc::counting_iterator is the
+  # portable replacement and is why `sycl` can appear in this list at all.
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
+    message(FATAL_ERROR
+      "TC_STDPAR=sycl requires icpx (IntelLLVM); got ${CMAKE_CXX_COMPILER_ID}.\n"
+      "  cmake -B build_sycl -DCMAKE_CXX_COMPILER=icpx -DTC_STDPAR=sycl")
+  endif()
+  target_compile_options(tc_flags INTERFACE -fsycl)
+  target_link_options   (tc_flags INTERFACE -fsycl)
+  target_compile_definitions(tc_flags INTERFACE TC_STDPAR_SYCL)
+
 else() # off → host serial; src/numerics/parallel.hpp picks std::execution::seq (no TBB dep)
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_OFF)
   # libc++ (Apple Clang / LLVM Clang) gates the <execution> PSTL policies behind

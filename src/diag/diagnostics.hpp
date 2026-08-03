@@ -76,8 +76,7 @@ Real max_speed(const LayeredState<NL>& s, const M& mesh) {
 // Reduce one field to "does it hold any non-finite value?" — a device OR expressed
 // as a count>0 (booleans don't reduce as cleanly as an int sum).
 inline bool field_nonfinite(Field2 f, Index nx, Index ny) {
-    auto ids = std::views::iota(Index{0}, nx * ny);
-    const int bad = std::transform_reduce(par, ids.begin(), ids.end(), 0, std::plus<int>{},
+    const int bad = do_reduce(nx * ny, 0, std::plus<int>{},
         [=](Index n) { return std::isfinite(f[n % nx, n / nx]) ? 0 : 1; });
     return bad > 0;
 }

@@ -6,15 +6,19 @@
 //
 //   1. tc::par — the execution policy. Normally std::execution::par_unseq (which
 //      nvc++ -stdpar=gpu offloads to the GPU, and -stdpar=multicore runs on CPU
-//      threads). Under the TC_STDPAR_OFF define (the g++ host build) it becomes
-//      std::execution::seq — sequential, deterministic, and crucially needs NO
-//      TBB. So the same source compiles three ways (gpu / multicore / host).
+//      threads). Under the TC_STDPAR_OFF define (the g++/clang host build) it
+//      becomes std::execution::seq — sequential, deterministic, and crucially
+//      needs NO TBB. Under TC_STDPAR_SYCL the policy and the algorithms both come
+//      from oneDPL instead. So the same source compiles FIVE ways:
+//      gpu / multicore / hip / sycl / host.
 //
-//   2. for_each_cell / for_each_face_* — the loop idioms. The reliably-offloading
-//      shape (verified on nvc++ 26.5 / V100) is: build a FLAT 1D index range
-//      with std::views::iota, hand it to std::for_each(tc::par, …), and unflatten
-//      (i,j) INSIDE the lambda. One 1D parallel range is what the runtime likes;
-//      a nested 2D loop is not the idiom.
+//   2. do_concurrent / do_reduce — THE launch sites, and the only two. Every
+//      loop idiom below is a thin wrapper over them, so the per-backend dialect
+//      lives in one place. The reliably-offloading shape (verified on nvc++ 26.5
+//      / V100, and by spikes/alpha on cc70, cc90, hipstdpar and oneDPL) is: a
+//      FLAT 1D index range, unflattened to (i,j) INSIDE the lambda. One 1D
+//      parallel range is what every runtime likes; a nested 2D loop is not the
+//      idiom.
 //
 // COALESCING (DESIGN ADR-2): we make the FAST axis (i, index 0 of a layout_left
 // Field) the fast-varying part of the flat index (`i = n % nx`). Adjacent thread
@@ -26,9 +30,17 @@
 // virtual, no throw. See DESIGN §8.
 // =============================================================================
 
-#include <execution>
-#include <algorithm>
-#include <ranges>
+#if defined(TC_STDPAR_SYCL)
+#  include <oneapi/dpl/execution>
+#  include <oneapi/dpl/algorithm>
+#  include <oneapi/dpl/numeric>
+#  include <oneapi/dpl/iterator>
+#  include <sycl/sycl.hpp>
+#else
+#  include <execution>
+#  include <algorithm>
+#  include <numeric>
+#endif
 #include "core/types.hpp"
 
 namespace tc {
@@ -92,13 +104,51 @@ struct counting_iterator {
     friend bool operator>=(counting_iterator a, counting_iterator b) { return a.i >= b.i; }
 };
 
-// ── do_concurrent — THE launch site. Every loop idiom below goes through it. ──
-// One shape, so the per-backend dialect has exactly one place to live. This is
-// the seam CONTRACT_MEMORY §0.0 describes: the language expresses parallelism,
-// and fifty kernels never learn which backend they are on.
+// ── do_concurrent / reduce — THE launch sites. ───────────────────────────────
+// Every loop and every reduction in the codebase goes through these two, so the
+// per-backend dialect has exactly one place to live. This is the seam
+// CONTRACT_MEMORY §0.0 describes: the language expresses parallelism, and fifty
+// kernels never learn which backend they are on.
+//
+// Intel is the reason these are functions rather than a bare `std::for_each(par,
+// ...)` at each call site: oneDPL needs its OWN algorithms and its own device
+// policy, so `std::` vs `oneapi::dpl::` has to be decidable in one place.
+#if defined(TC_STDPAR_SYCL)
+inline sycl::queue& sycl_queue() {          // SYCL needs a queue to launch at all
+    static sycl::queue q{sycl::gpu_selector_v};
+    return q;
+}
+#endif
+
 template <class F>
 void do_concurrent(Index count, F f) {
+#if defined(TC_STDPAR_SYCL)
+    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy(sycl_queue()),
+                          oneapi::dpl::counting_iterator<Index>(0),
+                          oneapi::dpl::counting_iterator<Index>(count), f);
+#else
     std::for_each(par, counting_iterator{0}, counting_iterator{count}, f);
+#endif
+}
+
+// Σ over [0,count) of unary(n), combined with `binop`. `T` is explicit and may be
+// wider than the field type.
+//
+// NOT named `reduce`: an argument like std::plus<int> drags namespace std in by
+// ADL, so an unqualified `reduce(...)` in namespace tc is AMBIGUOUS against
+// std::reduce. Pairs with do_concurrent instead. (In its eventual home,
+// tc::device::reduce, the qualification makes the plain name safe again.)
+template <class T, class Binop, class Unary>
+T do_reduce(Index count, T init, Binop binop, Unary unary) {
+#if defined(TC_STDPAR_SYCL)
+    return oneapi::dpl::transform_reduce(
+        oneapi::dpl::execution::make_device_policy(sycl_queue()),
+        oneapi::dpl::counting_iterator<Index>(0),
+        oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
+#else
+    return std::transform_reduce(par, counting_iterator{0}, counting_iterator{count},
+                                 init, binop, unary);
+#endif
 }
 
 // ── 1D: run f(n) for n in [0, count) ─────────────────────────────────────────

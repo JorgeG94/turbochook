@@ -55,7 +55,20 @@ public:
     File& operator=(const File&) = delete;
 
     static File create(std::string_view path) {
-        int id; check(nc_create(std::string(path).c_str(), NC_CLOBBER | NC_NETCDF4, &id));
+        const std::string p(path);
+        int id;
+        const int rc = nc_create(p.c_str(), NC_CLOBBER | NC_NETCDF4, &id);
+        if (rc != NC_NOERR) {
+            // NAME THE FILE. Bare `check(rc)` reports the netCDF string and the
+            // source location of the throw, which sends you to this header
+            // instead of to the path that failed -- and the commonest cause by
+            // far is a relative outdir that does not exist under $PWD, whose
+            // errno ("Permission denied" / "No such file") reads as a filesystem
+            // problem rather than a missing directory.
+            throw Error(Errc::io_failure,
+                        "cannot create '" + p + "': " + nc_strerror(rc) +
+                        " (does the parent directory exist and is it writable?)");
+        }
         return File(id);
     }
     static File open(std::string_view path) {                 // read-back (tests / restart)
