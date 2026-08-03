@@ -80,7 +80,15 @@ inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicor
 template <class F>
 void do_concurrent(Index count, F f) {
 #if defined(TC_STDPAR_SYCL)
-    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy(detail::device_queue()),
+    // UNIQUE KERNEL NAME PER CALL SITE -- make_device_policy<F>, not
+    // make_device_policy. oneDPL derives the SYCL kernel name from the policy's
+    // name parameter, so a bare make_device_policy(q) gives EVERY call site the
+    // same policy type and therefore the same kernel name. The kernel compiled
+    // for one functor then gets launched with another's arguments:
+    // ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE where the sizes differ, and
+    // silently WRONG NUMBERS where they happen to match. F is the lambda's
+    // closure type, which is unique per call site by construction.
+    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy<F>(detail::device_queue()),
                           oneapi::dpl::counting_iterator<Index>(0),
                           oneapi::dpl::counting_iterator<Index>(count), f);
     // Explicit wait. CONTRACT_MEMORY says do_concurrent MAY be async and that a
@@ -114,10 +122,14 @@ void do_concurrent(Index count, F f) {
 template <class T, class Binop, class Unary>
 T do_reduce(Index count, T init, Binop binop, Unary unary) {
 #if defined(TC_STDPAR_SYCL)
-    return oneapi::dpl::transform_reduce(
-        oneapi::dpl::execution::make_device_policy(detail::device_queue()),
+    // Unique kernel name per call site -- see do_concurrent above. `Unary` is the
+    // caller's closure type, distinct at every call site.
+    auto r = oneapi::dpl::transform_reduce(
+        oneapi::dpl::execution::make_device_policy<Unary>(detail::device_queue()),
         oneapi::dpl::counting_iterator<Index>(0),
         oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
+    detail::device_queue().wait();
+    return r;
 #else
     auto ids = std::views::iota(Index{0}, count);
     return std::transform_reduce(par, ids.begin(), ids.end(), init, binop, unary);
