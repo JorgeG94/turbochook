@@ -77,18 +77,27 @@ inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicor
 // Intel is the reason these are functions rather than a bare `std::for_each(par,
 // ...)` at each call site: oneDPL needs its OWN algorithms and its own device
 // policy, so `std::` vs `oneapi::dpl::` has to be decidable in one place.
+#if defined(TC_STDPAR_SYCL)
+// SYCL kernel names must be FORWARD-DECLARABLE, which a lambda closure type is
+// not -- make_device_policy<F> does not compile. A namespace-scope class template
+// does satisfy the rule, and `tag<F>` is still unique per call site because F is.
+// Declared, never defined: these are names, not types anyone instantiates.
+namespace kernel_name {
+template <class> struct do_concurrent_k;
+template <class> struct reduce_k;
+} // namespace kernel_name
+#endif
+
 template <class F>
 void do_concurrent(Index count, F f) {
 #if defined(TC_STDPAR_SYCL)
-    // UNIQUE KERNEL NAME PER CALL SITE -- make_device_policy<F>, not
-    // make_device_policy. oneDPL derives the SYCL kernel name from the policy's
-    // name parameter, so a bare make_device_policy(q) gives EVERY call site the
-    // same policy type and therefore the same kernel name. The kernel compiled
-    // for one functor then gets launched with another's arguments:
+    // UNIQUE KERNEL NAME PER CALL SITE. oneDPL derives the SYCL kernel name from
+    // the policy's name parameter, so a bare make_device_policy(q) gives EVERY
+    // call site the same policy type and therefore the same name. The kernel
+    // compiled for one functor then gets launched with another's arguments:
     // ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE where the sizes differ, and
-    // silently WRONG NUMBERS where they happen to match. F is the lambda's
-    // closure type, which is unique per call site by construction.
-    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy<F>(detail::device_queue()),
+    // silently WRONG NUMBERS where they happen to match.
+    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy<kernel_name::do_concurrent_k<F>>(detail::device_queue()),
                           oneapi::dpl::counting_iterator<Index>(0),
                           oneapi::dpl::counting_iterator<Index>(count), f);
     // Explicit wait. CONTRACT_MEMORY says do_concurrent MAY be async and that a
@@ -125,7 +134,7 @@ T do_reduce(Index count, T init, Binop binop, Unary unary) {
     // Unique kernel name per call site -- see do_concurrent above. `Unary` is the
     // caller's closure type, distinct at every call site.
     auto r = oneapi::dpl::transform_reduce(
-        oneapi::dpl::execution::make_device_policy<Unary>(detail::device_queue()),
+        oneapi::dpl::execution::make_device_policy<kernel_name::reduce_k<Unary>>(detail::device_queue()),
         oneapi::dpl::counting_iterator<Index>(0),
         oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
     detail::device_queue().wait();

@@ -85,7 +85,10 @@ elseif(TC_STDPAR STREQUAL "sycl")
       "TC_STDPAR=sycl requires icpx (IntelLLVM); got ${CMAKE_CXX_COMPILER_ID}.\n"
       "  cmake -B build_sycl -DCMAKE_CXX_COMPILER=icpx -DTC_STDPAR=sycl")
   endif()
-  target_compile_options(tc_flags INTERFACE -fsycl)
+  # -fsycl-unnamed-lambda: default-on in recent icpx, spelled out because the
+  # oneDPL policy path is sensitive to it and a silent default is a bad thing to
+  # depend on twice in one day.
+  target_compile_options(tc_flags INTERFACE -fsycl -fsycl-unnamed-lambda)
   target_link_options   (tc_flags INTERFACE -fsycl)
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_SYCL)
 
