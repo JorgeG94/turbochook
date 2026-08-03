@@ -38,6 +38,7 @@
 #  include <sycl/sycl.hpp>
 #else
 #  include <execution>
+#  include <ranges>
 #  include <algorithm>
 #  include <numeric>
 #endif
@@ -64,45 +65,6 @@ inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicor
 // deleted-copy-ctor bug it warns about, latent only because the host build takes
 // the other branch.
 
-// ── the index source ─────────────────────────────────────────────────────────
-// `std::views::iota` was the original spelling and it is NOT portable: oneDPL
-// REJECTS it (read-only proxy iterator), so no code routed through here could
-// ever compile for Intel. A plain random-access counting iterator is accepted by
-// libstdc++, libc++ and nvc++ alike, and oneDPL's own `counting_iterator` is the
-// drop-in for the SYCL build. See spikes/alpha/device.hpp, where the same type
-// carries a two-layer-equivalent kernel on all four toolchains.
-struct counting_iterator {
-    using iterator_category = std::random_access_iterator_tag;
-    using value_type        = Index;
-    using difference_type   = std::ptrdiff_t;
-    using pointer           = const Index*;
-    using reference         = Index;             // by value: no proxy object
-
-    Index i = 0;
-
-    reference operator*() const { return i; }
-    reference operator[](difference_type n) const { return i + Index(n); }
-
-    counting_iterator& operator++()    { ++i; return *this; }
-    counting_iterator  operator++(int) { auto t = *this; ++i; return t; }
-    counting_iterator& operator--()    { --i; return *this; }
-    counting_iterator  operator--(int) { auto t = *this; --i; return t; }
-
-    counting_iterator& operator+=(difference_type n) { i += Index(n); return *this; }
-    counting_iterator& operator-=(difference_type n) { i -= Index(n); return *this; }
-
-    friend counting_iterator operator+(counting_iterator a, difference_type n) { return a += n; }
-    friend counting_iterator operator+(difference_type n, counting_iterator a) { return a += n; }
-    friend counting_iterator operator-(counting_iterator a, difference_type n) { return a -= n; }
-    friend difference_type   operator-(counting_iterator a, counting_iterator b) { return a.i - b.i; }
-
-    friend bool operator==(counting_iterator a, counting_iterator b) { return a.i == b.i; }
-    friend bool operator!=(counting_iterator a, counting_iterator b) { return a.i != b.i; }
-    friend bool operator< (counting_iterator a, counting_iterator b) { return a.i <  b.i; }
-    friend bool operator> (counting_iterator a, counting_iterator b) { return a.i >  b.i; }
-    friend bool operator<=(counting_iterator a, counting_iterator b) { return a.i <= b.i; }
-    friend bool operator>=(counting_iterator a, counting_iterator b) { return a.i >= b.i; }
-};
 
 // ── do_concurrent / reduce — THE launch sites. ───────────────────────────────
 // Every loop and every reduction in the codebase goes through these two, so the
@@ -127,7 +89,15 @@ void do_concurrent(Index count, F f) {
                           oneapi::dpl::counting_iterator<Index>(0),
                           oneapi::dpl::counting_iterator<Index>(count), f);
 #else
-    std::for_each(par, counting_iterator{0}, counting_iterator{count}, f);
+    // std::views::iota, NOT the hand-rolled counting_iterator below. This is the
+    // shape verified to offload on nvc++/V100, and there is no reason to move off
+    // it: only oneDPL ever rejected iota_view, and oneDPL is handled above.
+    //
+    // The hand-rolled type is also not a conforming C++17 ForwardIterator -- its
+    // `reference` is a prvalue `Index`, where the requirement is a true reference.
+    // libstdc++ and libc++ tolerate that; an offloading implementation need not.
+    auto ids = std::views::iota(Index{0}, count);
+    std::for_each(par, ids.begin(), ids.end(), f);
 #endif
 }
 
@@ -146,8 +116,8 @@ T do_reduce(Index count, T init, Binop binop, Unary unary) {
         oneapi::dpl::counting_iterator<Index>(0),
         oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
 #else
-    return std::transform_reduce(par, counting_iterator{0}, counting_iterator{count},
-                                 init, binop, unary);
+    auto ids = std::views::iota(Index{0}, count);
+    return std::transform_reduce(par, ids.begin(), ids.end(), init, binop, unary);
 #endif
 }
 
