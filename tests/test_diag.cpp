@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 #include <cmath>
+#include <limits>
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
@@ -62,7 +63,14 @@ TEST_CASE("any_nonfinite: clean state passes, a poked NaN is caught") {
 
     // poke a NaN into one u-face → the gate must fire
     tc::for_each_cell(m.extent_x(tc::Loc::XFace), m.extent_y(tc::Loc::XFace),
-                      [=](tc::Index i, tc::Index j) { if (i == 1 && j == 2) u[i, j] = std::nan(""); });
+                      [=](tc::Index i, tc::Index j) {
+                          // quiet_NaN(), NOT std::nan(""): the latter is a runtime
+                          // function that PARSES a string, and SYCL device code has
+                          // no such symbol ("undefined function nan"). quiet_NaN is
+                          // constexpr and works in every backend's device code.
+                          if (i == 1 && j == 2)
+                              u[i, j] = std::numeric_limits<tc::Real>::quiet_NaN();
+                      });
     CHECK(tc::any_nonfinite(s, m) == true);
 }
 

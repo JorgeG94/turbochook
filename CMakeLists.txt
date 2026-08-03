@@ -67,9 +67,17 @@ elseif(TC_STDPAR STREQUAL "sycl")
   # Intel. oneDPL supplies the parallel algorithms; note the deliberate absence of
   # -fsycl-pstl-offload, measured to double binary size for no gain (spike 05).
   #
-  # This build is only possible because no loop uses std::views::iota any more:
-  # oneDPL REJECTS it as a read-only proxy iterator. tc::counting_iterator is the
-  # portable replacement and is why `sycl` can appear in this list at all.
+  # TC_STDPAR_SYCL makes parallel.hpp take the oneDPL branch: its own algorithms,
+  # its own device policy (which needs a queue), and oneapi::dpl::counting_iterator
+  # instead of std::views::iota -- oneDPL REJECTS iota_view as a read-only proxy
+  # iterator. Every other backend keeps iota_view, which is the shape verified to
+  # offload on nvc++.
+  #
+  # NOT SUFFICIENT ON ITS OWN: src/lib/arena.hpp is a std::vector<std::byte>, i.e.
+  # ordinary host heap. nvc++ -stdpar promotes the heap to MANAGED memory, which is
+  # why that works today; oneDPL has no such mechanism, so a device-policy kernel
+  # over arena memory fails at RUNTIME. Intel needs the arena on USM
+  # (sycl::malloc_shared / malloc_device) before it can actually run.
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
     message(FATAL_ERROR
       "TC_STDPAR=sycl requires icpx (IntelLLVM); got ${CMAKE_CXX_COMPILER_ID}.\n"
@@ -155,17 +163,36 @@ endforeach()
 # ── tests (doctest via FetchContent; one runner via CTest) ───────────────────
 include(CTest)  # defines BUILD_TESTING (default ON)
 if(BUILD_TESTING)
-  include(FetchContent)
-  FetchContent_Declare(doctest
-    GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG        v2.5.3)
-  FetchContent_MakeAvailable(doctest)
+  # Prefer an already-installed doctest. FetchContent's git clone runs at CONFIGURE
+  # time, so on a compute node with no outbound network it BLOCKS until the TCP
+  # timeout -- silently, with no output, looking exactly like a hung cmake. That is
+  # the commonest "cmake is stuck" on a cluster and it has nothing to do with the
+  # compiler being configured.
+  find_package(doctest QUIET)
+  if(NOT doctest_FOUND)
+    message(STATUS "doctest not installed -> cloning from GitHub (needs OUTBOUND NETWORK).")
+    message(STATUS "  If this hangs, you are on a node without network access.")
+    message(STATUS "  Re-run with -DBUILD_TESTING=OFF, or install doctest and set")
+    message(STATUS "  -DCMAKE_PREFIX_PATH=<prefix>.")
+    set(FETCHCONTENT_QUIET OFF)          # show git progress rather than blocking mutely
+    include(FetchContent)
+    FetchContent_Declare(doctest
+      GIT_REPOSITORY https://github.com/doctest/doctest.git
+      GIT_TAG        v2.5.3)
+    FetchContent_MakeAvailable(doctest)
+  endif()
 
   file(GLOB TC_TEST_SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/test_*.cpp)
   if(TC_TEST_SRC)
     add_executable(tc_tests ${TC_TEST_SRC})
     target_link_libraries(tc_tests PRIVATE turbochook doctest::doctest)
-    include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
+    # doctest_SOURCE_DIR only exists on the FetchContent path; an installed
+    # doctest ships the module on CMAKE_MODULE_PATH instead.
+    if(DEFINED doctest_SOURCE_DIR)
+      include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
+    else()
+      include(doctest)
+    endif()
     doctest_discover_tests(tc_tests)   # registers each TEST_CASE with CTest
   endif()
 endif()
