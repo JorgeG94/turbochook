@@ -54,10 +54,17 @@ namespace tc {
 // the inline-constexpr policy object copies nothing and works on both stdlibs.
 // (On libc++ the host build also needs -fexperimental-library to expose the PSTL
 // policies at all; CMake adds it for Clang. See CMakeLists.txt, TC_STDPAR=off.)
-#if defined(TC_STDPAR_OFF)
+//
+// Under TC_STDPAR_SYCL there is NO policy object at all: <execution> is not even
+// included on that path (the launchers below call sycl::queue::parallel_for), so
+// naming std::execution here would not compile. The seam is do_concurrent /
+// do_reduce; `par` is an implementation detail of the std-algorithm backends.
+#if !defined(TC_STDPAR_SYCL)
+#  if defined(TC_STDPAR_OFF)
 inline constexpr const auto& par = std::execution::seq;        // host build: no TBB needed
-#else
+#  else
 inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicore
+#  endif
 #endif
 // ^ BOTH bind by reference. The comment above explains why `seq` must, and then
 // the original bound `par_unseq` BY VALUE two lines later -- the same libc++
