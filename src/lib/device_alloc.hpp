@@ -45,9 +45,15 @@
 namespace tc::detail {
 
 #if defined(TC_STDPAR_SYCL)
-// One queue for the process. SYCL needs it to allocate as well as to launch, which
-// is why the device layer carries a Context at all.
-inline sycl::queue& arena_queue() {
+// THE queue for the process -- allocation AND launch must share it.
+//
+// SYCL USM is CONTEXT-BOUND: memory from sycl::malloc_shared(q1) is not valid in a
+// kernel submitted to q2 unless the two queues share a context, and two separately
+// constructed queues from gpu_selector_v need not. numerics/parallel.hpp therefore
+// launches on THIS queue rather than making its own -- an earlier revision had one
+// each, which is invalid on Intel and harmless everywhere else, i.e. exactly the
+// bug a single-vendor CI cannot see.
+inline sycl::queue& device_queue() {
     static sycl::queue q{sycl::gpu_selector_v};
     return q;
 }
@@ -58,7 +64,7 @@ inline sycl::queue& arena_queue() {
 inline void* managed_alloc(std::size_t bytes) {
     if (bytes == 0) return nullptr;
 #if   defined(TC_STDPAR_SYCL)
-    return sycl::malloc_shared(bytes, arena_queue());
+    return sycl::malloc_shared(bytes, device_queue());
 #elif defined(TC_STDPAR_HIP)
     void* p = nullptr;
     return (hipMallocManaged(&p, bytes) == hipSuccess) ? p : nullptr;
@@ -79,7 +85,7 @@ inline void* managed_alloc(std::size_t bytes) {
 inline void managed_free(void* p) noexcept {
     if (!p) return;
 #if   defined(TC_STDPAR_SYCL)
-    sycl::free(p, arena_queue());
+    sycl::free(p, device_queue());
 #elif defined(TC_STDPAR_HIP)
     hipFree(p);
 #elif defined(TC_STDPAR_CUDA)

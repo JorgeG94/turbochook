@@ -43,6 +43,8 @@
 #  include <numeric>
 #endif
 #include "core/types.hpp"
+#include "lib/device_alloc.hpp"   // THE queue: USM is context-bound, so allocation
+                                   // and launch must share one (see that header)
 
 namespace tc {
 
@@ -75,17 +77,10 @@ inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicor
 // Intel is the reason these are functions rather than a bare `std::for_each(par,
 // ...)` at each call site: oneDPL needs its OWN algorithms and its own device
 // policy, so `std::` vs `oneapi::dpl::` has to be decidable in one place.
-#if defined(TC_STDPAR_SYCL)
-inline sycl::queue& sycl_queue() {          // SYCL needs a queue to launch at all
-    static sycl::queue q{sycl::gpu_selector_v};
-    return q;
-}
-#endif
-
 template <class F>
 void do_concurrent(Index count, F f) {
 #if defined(TC_STDPAR_SYCL)
-    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy(sycl_queue()),
+    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy(detail::device_queue()),
                           oneapi::dpl::counting_iterator<Index>(0),
                           oneapi::dpl::counting_iterator<Index>(count), f);
 #else
@@ -112,7 +107,7 @@ template <class T, class Binop, class Unary>
 T do_reduce(Index count, T init, Binop binop, Unary unary) {
 #if defined(TC_STDPAR_SYCL)
     return oneapi::dpl::transform_reduce(
-        oneapi::dpl::execution::make_device_policy(sycl_queue()),
+        oneapi::dpl::execution::make_device_policy(detail::device_queue()),
         oneapi::dpl::counting_iterator<Index>(0),
         oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
 #else
