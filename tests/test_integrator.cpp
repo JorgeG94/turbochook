@@ -15,6 +15,12 @@
 #include "physics/state/baro_state.hpp"
 #include "numerics/integrator.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_integrator {
+
 namespace {
 // A synthetic RHS: out = -λ·in on η, zero on u/v (a decoupled decay per cell).
 auto decay_rhs(tc::Real lambda) {
@@ -126,3 +132,5 @@ TEST_CASE("SSPRK2 integrates a constant tendency exactly (linear in t)") {
         for (tc::Index i = 0; i < m.nx(); ++i)
             CHECK(e[i, j] == doctest::Approx(expect));
 }
+
+}  // namespace tu_test_integrator

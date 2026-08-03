@@ -20,6 +20,12 @@
 #include "physics/core/ocean_core.hpp"
 #include "diag/diagnostics.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_periodic {
+
 using tc::Real;
 using tc::Index;
 
@@ -104,3 +110,5 @@ TEST_CASE("periodic-x: rightward pulse crosses the seam at speed c") {
     CHECK(dxsep < Real(3) * dx);                         // crest crossed the seam, ≈ c·t
     CHECK(emax > H + Real(0.5) * A);                     // pulse survived (not reflected/cancelled)
 }
+
+}  // namespace tu_test_periodic

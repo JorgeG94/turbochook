@@ -23,6 +23,12 @@
 #include "physics/core/ocean_core.hpp"
 #include "diag/diagnostics.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_gravity_wave {
+
 using tc::Real;
 using tc::Index;
 
@@ -76,3 +82,5 @@ TEST_CASE("gravity wave: closed-channel standing mode-1 oscillates at sqrt(gH)")
     const Real mass1 = tc::total_mass(core.state(), mesh);
     CHECK(std::abs(mass1 - mass0) / mass0 < 1e-10);          // exact conservation over the run
 }
+
+}  // namespace tu_test_gravity_wave

@@ -7,6 +7,12 @@
 #include "core/types.hpp"
 #include "mesh/cartesian_mesh.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_mesh {
+
 TEST_CASE("CartesianMesh: staggered extents per location") {
     const tc::Index nx = 8, ny = 4;
     tc::CartesianMesh m(nx, ny, /*dx*/2.0, /*dy*/5.0);
@@ -67,3 +73,5 @@ TEST_CASE("CartesianMesh: topology defaults to closed walls, is configurable") {
     CHECK(channel.edge(tc::Edge::East) == tc::EdgeConn::Periodic);
     CHECK(channel.edge(tc::Edge::South) == tc::EdgeConn::Wall);
 }
+
+}  // namespace tu_test_mesh

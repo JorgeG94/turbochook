@@ -13,6 +13,12 @@
 #include "physics/state/baro_state.hpp"
 #include "diag/diagnostics.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_diag {
+
 TEST_CASE("total_mass = Σ η·area for a uniform free surface") {
     const tc::Index nx = 6, ny = 4;
     const tc::Real  dx = 10.0, dy = 20.0, eta0 = 3.0;
@@ -125,3 +131,5 @@ TEST_CASE("zonal_mean: length-weighted mean over x gives a y-profile") {
     tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof);
     for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx((nx - 1) / 2.0));
 }
+
+}  // namespace tu_test_diag

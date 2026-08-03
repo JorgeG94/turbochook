@@ -24,6 +24,12 @@
 #include "physics/momentum/pgf.hpp"
 #include "diag/diagnostics.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_spherical_ops {
+
 using tc::Real;
 using tc::Index;
 
@@ -126,3 +132,5 @@ TEST_CASE("spherical: geostrophically-balanced zonal flow has tiny kv residual")
     CHECK(amax_center_v(k.u, mesh.extent_x(tc::Loc::XFace), mesh.extent_y(tc::Loc::XFace)) < 1e-12);
     CHECK(amax_center_v(k.eta, mesh.extent_x(tc::Loc::Center), mesh.extent_y(tc::Loc::Center)) < 1e-12);
 }
+
+}  // namespace tu_test_spherical_ops

@@ -20,6 +20,12 @@
 #include "physics/momentum/two_layer_pgf.hpp"
 #include "physics/core/multilayer_core.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_two_layer {
+
 using tc::Real;
 using tc::Index;
 
@@ -187,3 +193,5 @@ TEST_CASE("TwoLayer baroclinic wave: internal mode at c' = √(g'·H₁H₂/(H�
     REQUIRE(t_cross > 0);
     CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.03));   // the SLOW internal-mode speed
 }
+
+}  // namespace tu_test_two_layer

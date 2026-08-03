@@ -15,6 +15,12 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/momentum/pgf.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_pgf {
+
 namespace {
 void zero_field(tc::Field2 f, tc::Index nx, tc::Index ny) {
     tc::for_each_cell(nx, ny, [=](tc::Index i, tc::Index j) { f[i, j] = tc::Real(0); });
@@ -104,3 +110,5 @@ TEST_CASE("zero_baro_state clears a dirty tendency (the +=-accumulation precondi
         for (tc::Index i = 0; i < m.extent_x(tc::Loc::YFace); ++i)
             CHECK(v[i, j] == doctest::Approx(0.0));
 }
+
+}  // namespace tu_test_pgf

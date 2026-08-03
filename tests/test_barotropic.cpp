@@ -19,6 +19,12 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/core/barotropic.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_barotropic {
+
 using tc::Real;
 using tc::Index;
 
@@ -82,3 +88,5 @@ TEST_CASE("barotropic FB solver: lake-at-rest stays flat") {
     CHECK(de == doctest::Approx(0.0));                                  // η never leaves H
     CHECK(sp == doctest::Approx(0.0));                                  // no spurious flow
 }
+
+}  // namespace tu_test_barotropic

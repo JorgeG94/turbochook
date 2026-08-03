@@ -23,6 +23,12 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/core/ocean_core.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_m0 {
+
 TEST_CASE("Arena hands out usable layout_left Field views") {
     tc::Arena arena(1u << 20);              // 1 MiB
     const tc::Index nx = 8, ny = 5;
@@ -95,3 +101,5 @@ TEST_CASE("the compile-time policy stack composes and runs (stubs)") {
     CHECK(core.state().u.extent(0)   == 17);   // x-faces = nx+1
     CHECK(core.state().v.extent(1)   == 9);    // y-faces = ny+1
 }
+
+}  // namespace tu_test_m0
