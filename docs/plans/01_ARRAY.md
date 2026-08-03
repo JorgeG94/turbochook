@@ -1,10 +1,14 @@
 # 01 — Array / View: the keystone
 
-**Blocks:** 02, 03, 04, 05 — this is the freeze they are all waiting on.
-**Depends on:** steps 1–4 depend on **nothing** and are the freeze. Steps 5–6 need
-*declarations only* from 02 (`Region`, `TC_KERNEL`, `device::sync`) and 03
-(`ScratchScope`, forward-declared). 02 itself depends on nothing and can start in
-parallel, so there is no cycle — **but if 02 has not landed, do steps 1–4 and stop.**
+**Depends on:** [`00_VOCAB.md`](00_VOCAB.md) — `MemoryQuantity`, `Index`, `Space`, `Loc`,
+`DType`, `Init`. That layer has no dependencies of its own and builds with no GPU and no
+`<mdspan>`, so it is a short, unblocked prerequisite rather than a parallel workstream.
+Steps 5–6 additionally need *declarations only* from 02 (`Region`, `TC_KERNEL`,
+`device::sync`) and 03 (`ScratchScope`, forward-declared); 02 depends on nothing and can
+run in parallel, so there is no cycle — **but if 02 has not landed, do steps 1–4 and
+stop.** Steps 1–4 are the freeze.
+
+**Blocks:** 02, 03, 04, 05.
 
 Design: [`../design/ARRAY.md`](../design/ARRAY.md) — authoritative.
 Contract: [`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0–§1.
@@ -33,32 +37,32 @@ Contract: [`../CONTRACT_MEMORY.md`](../CONTRACT_MEMORY.md) §0–§1.
 ## Files
 
 ```
-src/core/types.hpp        Real, Index, GlobalIndex, is_scalar_v, Scalar, DType, dtype_of
-src/core/space.hpp        Space, Loc, Parity, host_subscriptable, mirror_is_identity
 src/core/view.hpp         View alias + the <mdspan> fallback shim
-src/core/array.hpp        Array, HostArray, Init, mirror(), copy(), debug_snapshot/peek
+src/core/array.hpp        Array, HostArray, mirror(), copy(), debug_snapshot/peek
 src/core/slice.hpp        window, layer, tracer, ColumnView, column()
 src/core/vector_field.hpp Stagger, VectorField<A|B|C>, CVector2, CVector3
 tests/test_core_array.cpp
 ```
 
-**Three collisions with the existing tree — resolve them before writing a line:**
+`types.hpp` and `space.hpp` — and with them `Index`, `Space`, `Loc`, `DType`, `Init`,
+`MemoryQuantity` and both predicates — belong to [`00_VOCAB.md`](00_VOCAB.md), along with
+the two collisions they carry (the existing 125-line `types.hpp`, and `tc::Loc` already
+living in `src/mesh/mesh.hpp:28` with 266 use sites).
 
-- **`src/core/types.hpp` already exists** (125 lines, 36 dependents, 149 use sites) and
-  defines `Real`, `Index = int`, `Field<Rank>` and the `MdView` shim. Append to it; add
-  `using Field = View<Real,Rank>` as a compatibility alias — verified to compile clean
-  against the real physics headers, because `Field` *is already*
-  `mdspan<Real, dextents<int,Rank>, layout_left>`. Note this changes `Index` from `int` to
-  `std::int32_t` under all 149 sites: a no-op on LP64/arm64, but say it out loud. Delete
-  `MdView` rather than leaving a second, divergent shim.
-- **`src/mesh/mesh.hpp:28` already defines `tc::Loc`** (266 use sites) plus `Parity`,
-  `x_staggered`, `y_staggered`. Defining `tc::Loc` again in `core/space.hpp` is a hard
-  redefinition the moment one TU sees both — which is immediately. **Move** all four into
-  `core/space.hpp` and have `mesh.hpp` include it.
-- **`TC_KERNEL` is claimed by both this plan and 02.** It does not exist under `src/` today
-  (only `spikes/common.hpp:36`). **02 owns it** — it expands to `__host__ __device__`,
-  which is backend-aware by definition, and `device/` is the only backend-aware code.
-  `slice.hpp` includes `device/backend.hpp` for it.
+**One collision is this workstream's own:** **`TC_KERNEL` is claimed by both this plan and
+02**, and exists under `src/` in neither (only `spikes/common.hpp:36`). **02 owns it** — it
+expands to `__host__ __device__`, which is backend-aware by definition, and `device/` is
+the only backend-aware code in the tree. `slice.hpp` includes `device/backend.hpp` for it.
+
+**The `<mdspan>` shim needs two things the design's "minimal surface" list omits.** It
+cannot be one alias behind `#if __has_include(<mdspan>)`, because without the header there
+is no `std::dextents` or `std::layout_left` to name — so the shim supplies
+`tc::dextents`/`tc::layout_left` lookalikes and `View` is written once against
+`tc::`-qualified names in both branches. It also needs a **converting constructor** to
+`View<const T,R>`, or `ckernel_view()` does not compile. And note the shim has no bounds
+checking at all, on the one toolchain it exists for — so §3.2's "checking comes from the
+standard library, free" is true everywhere *except* Aurora. Say so rather than discovering
+it there.
 
 ## Work order
 

@@ -226,8 +226,11 @@ public:
 
     constexpr Index extent(int r) const { return v_.extent(r); }
     // required_span_size(), not the product of extents -- they differ under any padded
-    // layout, and `copy` sizes its memcpy from this.
-    constexpr std::size_t bytes() const { return sizeof(T) * v_.mapping().required_span_size(); }
+    // layout, and `copy` sizes its memcpy from this. Returns MemoryQuantity (workstream
+    // 00), not size_t: this feeds MemoryRequirements, which sums it and must not wrap.
+    constexpr MemoryQuantity bytes() const {
+        return MemoryQuantity::bytes(sizeof(T) * v_.mapping().required_span_size());
+    }
     constexpr const char* label() const { return label_; }
     static constexpr DType dtype() { return dtype_of<T>(); }
 };
