@@ -322,11 +322,11 @@ Rules, all load-bearing:
 
 There are three kinds of storage, and they answer **two different questions**:
 
-| | who can dereference it? | who owns the pages? |
-|---|---|---|
-| host-local | host | this rank |
-| host-shared | host | every rank on the node (`MPI_Win_allocate_shared`) |
-| device | device | this rank |
+| | who can dereference it? | who owns the pages? | allocator |
+|---|---|---|---|
+| host-local | host | this rank | `aligned_alloc` |
+| host-shared | host | every rank on the node | `MPI_Win_allocate_shared` |
+| device | device | this rank | `cudaMalloc` / `sycl::malloc_device` |
 
 `Space` answers only the first, because that is the one a kernel body can observe.
 Host-local and host-shared are ordinary host pointers and dereference identically, so
@@ -352,6 +352,18 @@ public:
 // Space::Host in the TYPE, the shared pool in the ALLOCATION:
 auto tide = arenas.shared().alloc<Real, Space::Host>("tide_amp", nx, ny, /*ng=*/0);
 ```
+
+**The device pool is one plain `cudaMalloc`.** Not `cudaMallocAsync`: the async allocator's
+value is stream-ordered reuse across repeated alloc/free, and the sealed arena exists
+precisely so that never happens. Plain `cudaMalloc` also keeps the base pointer stable,
+which is what makes CUDA graph capture legal.
+
+> **No separate pinned pool.** Page-locked host memory is what makes `cudaMemcpyAsync`
+> genuinely async on a discrete GPU — out of pageable memory the driver stages through its
+> own bounce buffer. We are not building a pool for it: on GH200 the C2C coherence makes
+> the distinction largely moot, and on the discrete path the cost lands on diagnostic
+> read-back at cadence rather than per-step. Revisit only if host-staged MPI halos (i.e.
+> CUDA-aware MPI off) ever become the production path — that one *is* per-step.
 
 **Shared allocation is COLLECTIVE on the node communicator**, and that is the real
 constraint. Every rank on the node must make the same `alloc` calls, in the same order,
@@ -381,15 +393,55 @@ catches it exactly.
 
 ### 1.7 Size the pools before allocating any of them
 
+A requirement is **not a number, it is a polynomial in one flexible dimension** — and the
+useful operation is inverting it:
+
 ```cpp
-class MemoryRequirements {
+class MemoryRequirement {
 public:
-    void add(const char* label, Pool, MemoryQuantity);
+    static MemoryRequirement Static(MemoryQuantity);          // n^0
+    static MemoryRequirement FlexLinear(MemoryQuantity);      // n^1  -- halo, edge terms
+    static MemoryRequirement FlexQuadratic(MemoryQuantity);   // n^2  -- tile interior
+
+    MemoryRequirement  operator+ (const MemoryRequirement&) const;  // BOTH live at once
+    MemoryRequirement  operator| (const MemoryRequirement&) const;  // ALTERNATIVES -> max
+    MemoryRequirement  operator* (std::uint32_t) const;             // n copies
+
+    MemoryQuantity total(std::optional<std::size_t> flex_dim = {}) const;
+    std::size_t    calculate_flex_dim(MemoryQuantity available) const;   // the inverse
+};
+
+class MemoryRequirements {                     // the per-pool, per-label tree
+public:
+    void add(const char* label, Pool, MemoryRequirement);
     MemoryQuantity total(Pool) const;
     bool fits(const Capabilities&, std::string& why_not) const;
     void report() const;                       // tree_printer: per-label, per-pool
 };
 ```
+
+**`+` versus `|` is the whole point.** Two fields that coexist sum; two that are
+alternatives — a scratch buffer used by remap *or* by vmix, never both — take the max.
+Without the distinction every requirement is a worst-case sum, which over-reserves the
+scratch tier and makes the reported figure useless for deciding anything. `ScratchScope`
+nesting is exactly a `|` fold.
+
+**The flexible dimension is a tile edge.** For a tile of edge `n`: interior storage goes as
+`n^2`, halo storage as `4*n*ng`, everything else is static. So
+
+```
+total(n) = static + (4*ng*per_cell)*n + (per_cell*nz*nfields)*n^2
+```
+
+and `calculate_flex_dim(free)` answers *"how large a tile fits in what is left"* — the
+question a 1 km global run with 100 layers must answer, because per-column scratch for a
+full subdomain will not fit. MOM6 tiles for the same reason with a compile-time block size.
+
+**D1 does not need this.** Every requirement it registers is `Static`, and a polynomial
+with zero flex coefficients *is* a plain quantity — so the shape costs nothing now and
+retrofitting it later would touch every `add()` call site. That is the opposite trade from
+the general units library (§00), where the machinery is large and the second user is
+hypothetical.
 
 Setup already walks the operator set to derive `ng = max(halo_width)`; the same pass sums
 every field's bytes. Checking that total against `capabilities()` **before the first
