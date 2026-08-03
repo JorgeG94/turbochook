@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <vector>
+#include <mdspan>
 
 using tc::Index;
 namespace dev = tc::device;
@@ -150,6 +151,41 @@ int main(int argc, char** argv) {
     std::snprintf(ibuf, sizeof ibuf, "got %.6g want %.6g", gmax, 2.0 * double(n - 1) + 1.0);
     check(std::fabs(gmax - (2.0 * double(n - 1) + 1.0)) <= 1e-9,
           "reduction with a custom binop", ibuf);
+
+    // ---- 7. THE remaining difference: std::mdspan in a kernel --------------
+    // Checks 1-6 all use a raw double*. The real tree captures a
+    // std::mdspan<Real, dextents<Index,2>, layout_left> -- and that is now the
+    // only structural difference left between this spike (passes on Intel) and
+    // global_integral (throws ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE).
+    //
+    // That error is a HOST/DEVICE LAYOUT MISMATCH, not a size limit: Level Zero
+    // is told an argument size that disagrees with the compiled kernel's. A class
+    // template from the standard library, instantiated in both host and device
+    // compilation passes, is exactly where such a disagreement can arise.
+    {
+        using Ext  = std::dextents<Index, 2>;
+        using View = std::mdspan<double, Ext, std::layout_left>;
+        View v(a, nx, ny);
+
+        std::printf("  [ .. ] sizeof(mdspan)=%zu  sizeof(extents)=%zu\n",
+                    sizeof(View), sizeof(Ext));
+
+        // (a) write through an mdspan
+        dev::do_concurrent(n, [=] (Index t) { v[t % nx, t / nx] = 3.0; });
+        dev::sync();
+        std::vector<double> hv(std::size_t(n), -1.0);
+        dev::copy_to_host(hv.data(), a, std::size_t(n));
+        bool w_ok = true;
+        for (Index t = 0; t < n && w_ok; ++t) if (hv[std::size_t(t)] != 3.0) w_ok = false;
+        check(w_ok, "mdspan: write in do_concurrent", w_ok ? "" : "wrong values");
+
+        // (b) REDUCE through an mdspan -- global_integral's exact shape
+        const double msum = dev::reduce<double>(n, 0.0,
+            [=] (Index t) { return v[t % nx, t / nx]; });
+        std::snprintf(ibuf, sizeof ibuf, "got %.6g want %.6g", msum, 3.0 * double(n));
+        check(std::fabs(msum - 3.0 * double(n)) <= 1e-6 * 3.0 * double(n),
+              "mdspan: reduce (global_integral shape)", ibuf);
+    }
 
     dev::free_(a);
     dev::free_(b);

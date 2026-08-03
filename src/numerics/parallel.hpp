@@ -83,6 +83,14 @@ void do_concurrent(Index count, F f) {
     oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy(detail::device_queue()),
                           oneapi::dpl::counting_iterator<Index>(0),
                           oneapi::dpl::counting_iterator<Index>(count), f);
+    // Explicit wait. CONTRACT_MEMORY says do_concurrent MAY be async and that a
+    // sync is required before any host read -- and the tree has never had one
+    // anywhere, because nvc++ and libstdc++ both happen to block. Relying on that
+    // is the same mistake as relying on nvc++ to promote the heap: an invariant
+    // held by one implementation's courtesy, written down nowhere. If oneDPL turns
+    // out to block too this costs a no-op; if it does not, it is the difference
+    // between right and wrong answers.
+    detail::device_queue().wait();
 #else
     // std::views::iota, NOT the hand-rolled counting_iterator below. This is the
     // shape verified to offload on nvc++/V100, and there is no reason to move off
