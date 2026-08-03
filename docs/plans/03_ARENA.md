@@ -24,26 +24,42 @@ tests/test_arena.cpp
 ```cpp
 class Arena {
 public:
-    explicit Arena(std::size_t bytes, Space s = Space::Device);   // ONE device_alloc
+    explicit Arena(MemoryQuantity size, Pool p = Pool::Device);   // ONE device_alloc
 
-    template <class T, Space S = Space::Device,
-              Loc L = Loc::Center, class... Ds>
-    Array<T, sizeof...(Ds), S, L, P> alloc(const char* label, Ds... dims);
+    // Rank is sizeof...(Ds) - 1: the trailing argument is the halo WIDTH, not a
+    // dimension. `Init` is a TEMPLATE parameter because a function parameter pack
+    // must come last -- `alloc(const char*, Ds..., Init = ...)` cannot deduce
+    // (verified: "no known conversion from int to Init").
+    template <class T, Space S = Space::Device, Loc L = Loc::Center,
+              Init I = Init::Poison, class... Ds>
+    Array<T, sizeof...(Ds) - 1, S, L> alloc(const char* label, Ds... dims_then_ng);
 
-    void         seal();                 // any persistent alloc after this throws
-    ScratchScope scratch();              // RAII; restores the bump pointer
-    std::size_t  bytes_used()     const;
-    std::size_t  bytes_capacity() const;
-    void         report()         const; // per-label breakdown
+    void           seal();                 // any persistent alloc after this throws
+    ScratchScope   scratch();              // RAII; restores the bump pointer
+    MemoryQuantity bytes_used()     const;
+    MemoryQuantity bytes_capacity() const;
+    void           report()         const; // per-label breakdown
+};
+
+class Arenas {                             // one bump stack per Pool
+public:
+    Arena& device();  Arena& host();  Arena& shared();
+    void   seal();                         // seals all three; ONE barrier
 };
 ```
+
+> **No `Parity` template parameter.** An earlier draft ended this signature
+> `Array<…, S, L, P>`. `Parity` moved to halo-group registration
+> (`group.add(u, v, Parity::Vector)`) because it changes no layout and no extent, and
+> vector components must exchange as a **pair** regardless — a 90° rotation swaps them.
+> `Array` has four template parameters. See [`../design/ARRAY.md`](../design/ARRAY.md) §4.1.
 
 Cell counts plus a halo width; `Loc` and the arena do the rest:
 
 ```cpp
 // Halo is in the EXTENTS; the interior box comes from Region. `Loc` supplies the
 // extra face -- alloc DERIVES it rather than trusting the caller (see work order 2).
-auto h = arena.alloc<Real>("h", nx, ny, nz, ng);                          // Loc::Center
+auto h = arena.alloc<Real>("h", nx, ny, nz, ng);                             // Loc::Center
 auto u = arena.alloc<Real, Space::Device, Loc::XFace>("u", nx, ny, nz, ng);  // +1 in x
 ```
 

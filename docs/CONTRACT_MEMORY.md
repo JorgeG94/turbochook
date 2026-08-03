@@ -36,17 +36,32 @@ using Real = float;
 using Real = double;
 #endif
 
-// Only meaningful for float fields: Accum<double> == double is NOT wider, so the
-// default production build gains nothing from it. Reproducible conservation totals
-// need the Efp fixed-point accumulator (CONTRACT_RUNTIME §8.1), not a wider float.
-template <Scalar T> using Accum = std::conditional_t<std::is_same_v<T,float>, double, T>;
-
 // Runtime tag for the C ABI / numpy boundary: Python must be told the dtype.
-enum class DType { F32, F64 };
-template <Scalar T> constexpr DType dtype_of();
+// FIXED underlying type -- FieldDesc marshals it through an int32 field, and an
+// implementation-defined width there is a live ABI hazard.
+enum class DType : std::int32_t { F32 = 0, F64 = 1 };
+
+// DEFINED, not just declared: workstream 05's C ABI calls it, and a bare declaration
+// links only while nobody does. The else branch is a static_assert rather than a
+// fallthrough to F64 -- `is_scalar_type` is specialisable so __half/bf16 can be
+// Scalar, and a half field announcing itself to numpy as F64 gives wrong itemsize,
+// wrong strides and a 4x over-read with no diagnostic.
+template <class> inline constexpr bool dependent_false = false;
+template <Scalar T> constexpr DType dtype_of() {
+    if      constexpr (std::is_same_v<T, float>)  return DType::F32;
+    else if constexpr (std::is_same_v<T, double>) return DType::F64;
+    else static_assert(dependent_false<T>, "dtype_of: no DType for this scalar - extend DType");
+}
 
 } // namespace tc
 ```
+
+**`Accum` is not here.** An earlier draft defined `Accum<T> = double` in this header "so
+reductions accumulate wider than they store". In the default `Real = double` build that is
+not wider and the production configuration gains nothing; reproducible conservation totals
+need `CONTRACT_RUNTIME` §8.1's **`Efp` fixed-point accumulator**, not a wider float. It is
+therefore only meaningful for `float` fields and lives in `device/reduce.hpp` (workstream
+02), which is also where the reductions that use it live.
 
 ### 0.1 Three different things called "variable precision"
 
@@ -101,16 +116,18 @@ offsets. You never form a global 3-D index; do not let the concept exist.
 
 ### 1.1 The halo lives in the extents; the interior lives in `Region`
 
-```cpp
-namespace tc {
-
-// Column-major (Fortran memory order) is kept -- that is the coalescing contract.
-// Fortran LOWER BOUNDS are not; see the note below.
-//   extent  = nx + 2*ng          interior = ng .. ng+nx-1
-struct Dims { Index n[4]; int rank; };
-
-} // namespace tc
 ```
+Column-major (Fortran memory ORDER) is kept -- that is the coalescing contract.
+Fortran LOWER BOUNDS are not; see the note below.
+
+  extent    0 .. nx + 2*ng - 1
+  interior  ng .. ng + nx - 1        <- Region carries this
+  halo      0 .. ng-1   and   ng+nx .. nx+2*ng-1
+```
+
+*(There is no separate dimension descriptor. Extents live in `std::dextents<Index,Rank>`
+inside the `View`; the interior box lives in `Region`. An earlier draft's `struct Dims`
+was the stump of the rejected `dim(lo,hi)` API and is gone.)*
 
 **Why this retires the ghost-cell reindex.** `DESIGN.md` §7 decision 3 records that
 moving to real ghost cells is *"a pervasive reindex … not a drop-in"*. It is neither.
@@ -119,7 +136,7 @@ branch, no clamp, no wrap** — and **no operator body changes**. Only the loop 
 and they come from `Region`, derived once from the mesh:
 
 ```cpp
-auto h = arena.alloc<Real>("h", nx + 2*ng, ny + 2*ng);   // halo in the extents
+auto h = arena.alloc<Real>("h", nx, ny, ng);   // cell counts + halo width; alloc adds 2*ng
 // interior kernels loop Region::interior(mesh)          — unchanged forever
 // the BC fills the halo strips                          — the only code that knows ng
 ```
@@ -153,69 +170,96 @@ Gate on `__has_include(<mdspan>)`, never `__cpp_lib_mdspan`. The fallback shim h
 
 ### 1.3 `Array` — the owning handle, and the gate
 
+The class is specified in [`design/ARRAY.md`](design/ARRAY.md) §4, which is authoritative
+and compiles. Reproduced here only far enough to fix the contract:
+
 ```cpp
-enum class Space { Host, Device };
+enum class Space : std::int32_t { Host = 0, Device = 1 };   // fixed width: crosses the ABI
+enum class Loc   : std::int32_t { Center = 0, XFace = 1, YFace = 2, Corner = 3 };
 
 template <class T, int Rank, Space S, Loc L = Loc::Center>
 class Array {
     View<T, Rank> v_{};              // default-constructible: Array is a member of
     const char*   label_ = "";       // LayeredState, BaroState, VmixContext ...
 public:
-    static constexpr Space space = S;
-    static constexpr Loc   loc   = L;   // changes EXTENTS; enforced by Arena::alloc
+    using value_type = T;
+    static constexpr int   rank_v = Rank;   // NOT `rank`: mdspan::rank() is a FUNCTION
+    static constexpr Space space  = S;
+    static constexpr Loc   loc    = L;      // changes EXTENTS; enforced by Arena::alloc
+
     constexpr Array() = default;
     constexpr Array(View<T,Rank> v, const char* label) : v_(v), label_(label) {}
 
-    // The ONLY thing that crosses to a kernel. No space tag: a View only ever
-    // exists inside a kernel or inside a host function that already proved access.
-    View<T, Rank> view() const { return v_; }
+    // The ONLY thing that crosses to a kernel. Named `kernel_view` because it also
+    // BYPASSES the gate below -- see design/ARRAY.md §4.0; lint, not types, closes it.
+    constexpr View<T, Rank>       kernel_view()  const { return v_; }
+    constexpr View<const T, Rank> ckernel_view() const;
 
     // Host subscript. A COMPILE ERROR on device storage — not a fault, not a
-    // runtime guard. (Kokkos catches most of this at runtime; we can do better
-    // because we never select a space dynamically.)
+    // runtime guard. Via the NAMED PREDICATE, not `S == Space::Host` spelled out:
+    // there are two predicates and they answer different questions (design §2).
     template <class... I> constexpr T& operator[](I... idx) const {
-        static_assert(S == Space::Host,
+        static_assert(host_subscriptable(S),
             "host subscript of Space::Device storage - take a mirror() first");
         return v_[idx...];
     }
 
-    Index lo(int r) const { return v_.lo(r); }
-    Index hi(int r) const { return v_.hi(r); }
-    const char* label() const { return label_; }
+    constexpr Index       extent(int r) const { return v_.extent(r); }
+    constexpr std::size_t bytes() const;      // sizeof(T) * required_span_size()
+    constexpr const char* label() const { return label_; }
+    static constexpr DType dtype() { return dtype_of<T>(); }
 };
 ```
 
 ASCII only in that message: nvc++'s EDG frontend renders non-ASCII as `???` (verified).
 
+**There is no `lo()`/`hi()`.** Zero-based means the lower bound is always 0, and the
+interior box belongs to `Region`, not to the field. An earlier draft of this section
+carried both accessors delegating to `v_.lo(r)`/`v_.hi(r)` — members `std::mdspan` does
+not have, from the rejected Fortran-bounds design.
+
 ### 1.4 `mirror` — and why it is also the numpy boundary
 
 ```cpp
-// Identity when the source is already host-accessible: no allocation, no copy,
-// and `copy()` below becomes a no-op. That is what lets ONE diagnostic / NetCDF /
-// restart / unit-test / numpy path serve the host build, coherent machines, and
-// discrete machines with no #ifdef at the call site.
-template <class T, int Rank, Space S>
-auto mirror(const Array<T,Rank,S>& a, Arena& host_scratch) {
-    if constexpr (S == Space::Host) return a;                       // zero cost
-    else                            return host_scratch.alloc_like(a);
-}
+// ALWAYS returns Space::Host in the TYPE. When the source is already host-accessible
+// -- host build, OR a coherent device build -- the identity lives in the BODY: no
+// allocation, same data_handle(), and `copy` below becomes a no-op. That is what lets
+// ONE diagnostic / NetCDF / restart / unit-test / numpy path serve the host build,
+// coherent machines, and discrete machines with no #ifdef at the call site.
+template <class T, int R, Space S, Loc L>
+Array<T,R,Space::Host,L> mirror(const Array<T,R,S,L>& a, ScratchScope& scratch);
 
-template <class T, int Rank, Space D, Space Src>
-void copy(const Array<T,Rank,D>& dst, const Array<T,Rank,Src>& src) {
-    if (dst.view().data() == src.view().data()) return;             // the no-op case
-    device::memcpy_to_host(dst.view().data(), src.view().data(), bytes(src));
-}
+// SYNCHRONISES before returning. No-op when dst and src share a data handle.
+template <class T, int R, Space D, Space Sr, Loc L>
+void copy(const Array<T,R,D,L>& dst, const Array<T,R,Sr,L>& src);
 ```
+
+Three things that must not drift, each of which the previous draft got wrong:
+
+- **`ScratchScope&`, not `Arena&`.** Every crossing happens inside the time loop, and the
+  arena is sealed by then (§1.5) — so an `Arena&` overload throws at the first diagnostic.
+- **`Loc L` is a template parameter.** Without it, deduction fails for every `Loc::XFace` /
+  `YFace` / `Corner` field, i.e. for most of the prognostic state.
+- **`copy` synchronises.** `do_concurrent` is contractually async, so a read-back that did
+  not sync would be racy on every discrete device — and this is the block everyone
+  copy-pastes, so the race would ship everywhere. It is declared, not defined, here on
+  purpose: a body that unconditionally called `memcpy_to_host` would run an H2D copy
+  backwards.
 
 Read-back is then written once, everywhere:
 
 ```cpp
 auto hh = mirror(h, scratch);
-copy(hh, h);
-for (Index j = 1; j <= ny; ++j)
-    for (Index i = 1; i <= nx; ++i)
-        out << hh(i, j);
+copy(hh, h);                                  // syncs; a no-op if mirror was the identity
+for (Index j = ng; j < ng + ny; ++j)
+    for (Index i = ng; i < ng + nx; ++i)
+        out << hh[i, j];                      // interior, zero-based -- NOT 1..nx
 ```
+
+Both details in that loop are load-bearing. `hh[i, j]`, because **`mdspan` has no
+`operator()`** (§1.2). And `ng .. ng+nx-1`, because under zero-basing a `1 <= i <= nx`
+loop reads the halo strip and then one cell past the end — verified to abort under
+`_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG`, silently wrong without it.
 
 The same call is the numpy handoff (`Array<Device>` → mirror → buffer protocol), which
 is why `Array`/`mirror` must be shaped with extents, strides, dtype and lifetime in
@@ -229,26 +273,40 @@ class Arena {
     std::size_t cap_ = 0, top_ = 0;
     bool        sealed_ = false;
 public:
-    explicit Arena(std::size_t bytes, Space s = Space::Device);   // ONE device_alloc
+    explicit Arena(MemoryQuantity size, Pool p = Pool::Device);   // ONE device_alloc
 
-    template <class T, Space S = Space::Device, class... Ds>
-    Array<T, sizeof...(Ds), S> alloc(const char* label, Ds... dims);
+    // `Loc L` is a VALUE parameter and must precede the type pack, or it can never be
+    // specified. It is also carried into the RETURN type -- an alloc that dropped it
+    // would hand back a Loc::Center handle for a face field, defeating the enforcement
+    // below. `ng` is the halo WIDTH, not part of the rank: rank is sizeof...(Ds) - 1.
+    //
+    // `Init` is a TEMPLATE parameter, not a trailing defaulted argument: a function
+    // parameter pack must come last, so `alloc(const char*, Ds..., Init = ...)` cannot
+    // deduce (verified -- it fails with "no known conversion from int to Init").
+    template <class T, Space S = Space::Device, Loc L = Loc::Center,
+              Init I = Init::Poison, class... Ds>
+    Array<T, sizeof...(Ds) - 1, S, L> alloc(const char* label, Ds... dims_then_ng);
 
-    void seal();                  // after init: any further alloc throws
+    void seal();                  // after init: any further alloc throws; ALSO the
+                                  // single device::sync() covering every async fill
     ScratchScope scratch();       // RAII; restores the bump pointer on destruction
-    std::size_t bytes_used() const;
+    MemoryQuantity bytes_used() const;
     void report() const;          // per-label breakdown - what mem_report.hpp was for
 };
 ```
 
-Declaration reads like Fortran:
+Declaration is **cell counts plus the halo width**, zero-based index domain:
 
 ```cpp
-//  real :: h (1-ng:nx+ng, 1-ng:ny+ng)
-//  real :: u (1-ng:nx+ng+1, 1-ng:ny+ng)
-auto h = arena.alloc<Real>("h", nx + 2*ng, ny + 2*ng);                    // Loc::Center
+auto h = arena.alloc<Real>("h", nx, ny, ng);                             // Loc::Center
 auto u = arena.alloc<Real, Space::Device, Loc::XFace>("u", nx, ny, ng);  // +1 face DERIVED
 ```
+
+One convention, not two. A caller that pre-summed `nx + 2*ng` would leave `alloc` unable to
+tell halo from interior — and therefore unable to **derive the extra face** that
+`Loc::XFace` requires, which is the whole point of putting `Loc` in the type
+([`design/ARRAY.md`](design/ARRAY.md) §4.1). A face field allocated without the extra face
+makes halo exchange silently wrong.
 
 Rules, all load-bearing:
 
@@ -259,6 +317,99 @@ Rules, all load-bearing:
   memory report.
 - **`ScratchScope` for transients** — RAII restore, exception-safe. This is the C++
   win over the Fortran original, and it finally makes `mark()/restore()` usable.
+
+### 1.6 Three pools, and `Space` is not the discriminator
+
+There are three kinds of storage, and they answer **two different questions**:
+
+| | who can dereference it? | who owns the pages? |
+|---|---|---|
+| host-local | host | this rank |
+| host-shared | host | every rank on the node (`MPI_Win_allocate_shared`) |
+| device | device | this rank |
+
+`Space` answers only the first, because that is the one a kernel body can observe.
+Host-local and host-shared are ordinary host pointers and dereference identically, so
+promoting the distinction to a third `Space` value would double the instantiation matrix
+and turn every `if constexpr (S == Space::Host)` into a two-case test, for a difference
+nothing at the point of use can see.
+
+`Pool` selects **which arena you allocate from**, not which overload you call — one
+`Arena` per pool, held together, the way `alloc`'s parameter pack requires (a trailing
+`Pool` argument cannot follow `Ds...` any more than a trailing `Init` could):
+
+```cpp
+enum class Pool { HostLocal, HostShared, Device };
+
+class Arenas {                       // one bump stack per pool
+public:
+    Arena& device();
+    Arena& host();
+    Arena& shared();                 // COLLECTIVE -- see below
+    void   seal();                   // seals all three; one barrier
+};
+
+// Space::Host in the TYPE, the shared pool in the ALLOCATION:
+auto tide = arenas.shared().alloc<Real, Space::Host>("tide_amp", nx, ny, /*ng=*/0);
+```
+
+**Shared allocation is COLLECTIVE on the node communicator**, and that is the real
+constraint. Every rank on the node must make the same `alloc` calls, in the same order,
+with the same sizes — a single rank-dependent `if` in setup (`if (has_open_boundary)
+arena.alloc(...)`) hangs the node with no diagnostic. The sealed-arena design already
+satisfies this by construction (allocation happens once, at init, in deterministic program
+order), but it must be a **stated invariant** rather than an accident: `seal()` hashes the
+allocation sequence and `MPI_Allreduce`s it, turning a hang into an error message for the
+cost of one reduction.
+
+Two consequences:
+
+- **`MPI_Win_free` is collective too**, so tearing down the shared pool is a collective
+  call. It gets an explicit `finalize()` rather than pure RAII, because one rank unwinding
+  out of an exception path while the others do not is a deadlock.
+- **`seal()` is already the barrier** the shared pattern needs. Allocate collectively →
+  fill once → barrier → read-only forever, and `seal()` is that barrier.
+
+Read-only-after-init shared arrays are typed `Array<const T, …>`. Concurrent unsynchronised
+writes into a window is the failure mode worth catching in the type system, and `const`
+catches it exactly.
+
+> **Deferred:** using a shared window for on-node halo exchange by direct load/store. That
+> is a different mechanism — the window holds *mutable* subdomain data, "read-only forever"
+> is gone, and it needs its own synchronisation protocol. It also matters much less on the
+> GPU path, where on-node neighbours go GPU-direct and never touch host memory.
+
+### 1.7 Size the pools before allocating any of them
+
+```cpp
+class MemoryRequirements {
+public:
+    void add(const char* label, Pool, MemoryQuantity);
+    MemoryQuantity total(Pool) const;
+    bool fits(const Capabilities&, std::string& why_not) const;
+    void report() const;                       // tree_printer: per-label, per-pool
+};
+```
+
+Setup already walks the operator set to derive `ng = max(halo_width)`; the same pass sums
+every field's bytes. Checking that total against `capabilities()` **before the first
+`device_alloc`** turns a mid-setup OOM — half a pool live, no useful message — into:
+
+```
+required: device 43.2 GiB   available: 31.7 GiB   short by 11.5 GiB
+  prognostic  18.4 GiB  (h, u, v, S, T x nz=75)
+  diagnostics 15.7 GiB  <-- 8 diagnostics at 3-D cadence
+  scratch      9.1 GiB
+```
+
+For the shared pool the same sum is `MPI_Allreduce`d over the node, which is the only way
+to catch "128 ranks x 340 MB does not fit" before it hangs.
+
+`MemoryQuantity` is a real type, not a `std::size_t`: it carries its own alignment, rounds
+up through `round_up()` rather than a `(n+255)/256*256` scattered across call sites, and
+prints itself. Alignment belongs in the type because the arena bump-allocates sub-arrays
+out of one slab and each one needs its own guarantee — `cudaMalloc` promises 256 B,
+`sycl::malloc_device` promises considerably less clearly.
 
 ---
 
@@ -410,23 +561,28 @@ template <Scalar T>
 void apply_divergence(View<T,2> kh, View<T,2> fx, View<T,2> fy,
                       Mesh m, T inv_area)
 {
-    device::do_concurrent(m.n_cells(), [=] TC_KERNEL (Index n) {
-        const Index i = m.i_of(n), j = m.j_of(n);
-        kh(i, j) -= ( fx(i+1, j) - fx(i, j)
-                    + fy(i, j+1) - fy(i, j) ) * inv_area;
+    device::do_concurrent(tag, m.interior(), Stencil{1}, Views{kh, fx, fy},
+                          [=] TC_KERNEL (Index i, Index j) {
+        kh[i, j] -= ( fx[i+1, j] - fx[i, j]
+                    + fy[i, j+1] - fy[i, j] ) * inv_area;
     });
 }
 ```
 
 Note what is absent: no `#ifdef`, no backend name, no manual index arithmetic, no
-offset for the halo, no launch configuration. And note `fx(i+1,j)` at `i == nx` reads a
-halo cell that *exists* because the array was declared with bounds — no clamp, no
+offset for the halo, no launch configuration. And note `fx[i+1,j]` at the last interior
+`i` reads a halo cell that *exists because the halo is in the extents* — no clamp, no
 branch, no wrap logic in the operator.
 
-Call it with `array.view()`:
+**`kh[i, j]`, not `kh(i, j)`** — `mdspan` has no call operator (§1.2). The subscript
+takes a comma-separated index list; note that inside a function-like macro it needs an
+extra paren layer (`assert((v[i,j] == x))`), because the commas are otherwise read as
+macro-argument separators.
+
+Call it with `array.kernel_view()`:
 
 ```cpp
-apply_divergence(kh.view(), fx.view(), fy.view(), mesh, inv_area);
+apply_divergence(kh.kernel_view(), fx.kernel_view(), fy.kernel_view(), mesh, inv_area);
 ```
 
 Passing `kh` itself does not compile. That is the boundary, enforced.
@@ -452,9 +608,9 @@ to offload under nvc++ ([`STATUS.md`](STATUS.md) #1). This is the natural shape 
 remap, vmix, and the tridiagonal solve.
 
 ```cpp
-device::do_concurrent(ncols, [=] TC_KERNEL (Index c) {
+device::do_concurrent(tag, ncols, [=] TC_KERNEL (Index c) {
     std::array<T, MAX_NZ> dz;            // per-iteration, in local/register memory
-    for (Index k = 1; k <= nz; ++k) dz[k-1] = h(c, k);
+    for (Index k = 0; k < nz; ++k) dz[k] = h[c, k];
     // ... serial vertical recurrence ...
 });
 ```
@@ -501,23 +657,33 @@ an accessor rather than raw indices.
 
 ```cpp
 // (cell, level) — cell is dim 0, therefore fast, therefore coalesced at each k.
-auto work = scratch.alloc<T>("col_work", dim(1, ncols), dim(1, nz));
+// No halo: the column scratch has no vertical stencil, so ng does not appear.
+auto work = scratch.alloc<T>("col_work", ncols, nz, /*ng=*/0);
 
-// A strided 1-D accessor so the kernel body still reads like Fortran.
+// A strided 1-D accessor. Needs an explicit constructor -- private members make it a
+// non-aggregate, so without one it is unconstructible, brace-init included.
 template <class T>
 class ColumnView {
-    T*    base_;
-    Index stride_;                       // = ncols
+    T*    base_ = nullptr;
+    Index stride_ = 1;                   // = a.extent(0), taken from the mapping
 public:
-    // k is 0-based over the column; base_ already points at level 0 of this cell.
+    ColumnView() = default;
+    TC_KERNEL ColumnView(T* base, Index stride) : base_(base), stride_(stride) {}
     TC_KERNEL T& operator[](Index k) const { return base_[k * stride_]; }
 };
 
-device::do_concurrent(ncols, [=] TC_KERNEL (Index c) {
-    ColumnView<T> col = work.column(c);  // {&work(c,1), ncols}
-    for (Index k = 1; k <= nz; ++k) col(k) = ...;   // coalesced, reads like col(k)
+template <class T, Space S, Loc L>
+TC_KERNEL ColumnView<T> column(const Array<T,2,S,L>& a, Index c);
+
+device::do_concurrent(tag, ncols, [=] TC_KERNEL (Index c) {
+    ColumnView<T> col = column(work, c);            // {&work[c,0], work.extent(0)}
+    for (Index k = 0; k < nz; ++k) col[k] = ...;    // coalesced across threads at each k
 });
 ```
+
+**`k` runs `0 .. nz-1` in a column kernel**, and `col[k]`, not `col(k)`. The surrounding
+3-D array is halo'd; the column scratch is not, because there is no stencil in the
+vertical to need one.
 
 **Not offered:** `shared` locality. A `do_concurrent` iteration may not write to
 anything another iteration reads — that is the no-scatter rule, and it is a hard
@@ -615,20 +781,22 @@ order-independent — it does not solve reproducibility. Only fixed-point does.
    ocean 3-D is `(i,j,k)`, sea ice `(i,j,cat,layer)`, tracers `(i,j,k,tr)` — the
    last two put something *after* the vertical, which the older "vertical slowest"
    wording forbade. See `design/ARRAY.md` §4.2.
-   **And `k` increases UPWARD: `k=1` is the bed, `k=nz` is the surface layer.**
-   This is rakali's convention. MOM6 and SIS2 both use the opposite (`k=1` at the
-   surface, `0` = the snow layer in the ice column), so **every ported formula flips**
+   **And `k` increases UPWARD: `k = ng` is the bed, `k = ng+nz-1` is the surface layer**
+   (zero-based, halo in the extents — §1.1; in unhalo'd column scratch that is `0` and
+   `nz-1`). This is rakali's convention. MOM6 and SIS2 both use the opposite (surface
+   first, `0` = the snow layer in the ice column), so **every ported formula flips**
    — two independent surveys named this as the single highest porting hazard, and
    rakali's sea-ice notes call the flip "highest hazard" outright. Decide it once,
    here, and gate it with tests whose failure mode is unmissable: a dense current must
-   settle at `k=1`, a buoyant plume must sit at `k=nz`, and a positive surface heat
-   flux must warm `k=nz` while preserving stratification.
+   settle at the bed, a buoyant plume must sit at the surface layer, and a positive
+   surface heat flux must warm the surface layer while preserving stratification.
    Extra dimensions extend the same rule outward — a sea-ice thickness distribution is
    `(i, j, cat)` / `(i, j, cat, layer)` with `i` fastest, so the category axis costs
    nothing and is embarrassingly parallel (see §3.1: flattening the launch over
    `cell × category` buys ~5x more independent columns, which is free occupancy for
    exactly the column kernels that are occupancy-bound).
-7. **Arrays carry bounds.** Halos are a declaration, not a reindex.
+7. **The halo lives in the extents.** Allocating it is a declaration, not a reindex —
+   operators read `v[i-1,j]` unchanged and only the loop bounds move, into `Region`.
 
 ## 5. Acceptance gate for this layer
 

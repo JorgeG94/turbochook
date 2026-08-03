@@ -68,9 +68,17 @@ using Real = double;
 #endif
 
 enum class DType : std::int32_t { F32 = 0, F64 = 1 };   // fixed width: crosses the C ABI
+
+// The `else` branch is a static_assert, NOT a fallthrough to F64. `is_scalar_type` is
+// specialisable precisely so __half/bf16 can be Scalar -- and a half field announcing
+// itself to numpy as F64 gives wrong itemsize, wrong strides and a 4x over-read with no
+// diagnostic. Admitting a new scalar type must therefore be a COMPILE ERROR here until
+// DType grows the matching enumerator.
+template <class> inline constexpr bool dependent_false = false;
 template <Scalar T> constexpr DType dtype_of() {
-    if constexpr (std::is_same_v<T, float>) return DType::F32;
-    else                                    return DType::F64;
+    if      constexpr (std::is_same_v<T, float>)  return DType::F32;
+    else if constexpr (std::is_same_v<T, double>) return DType::F64;
+    else static_assert(dependent_false<T>, "dtype_of: no DType for this scalar - extend DType");
 }
 
 // ── space ───────────────────────────────────────────────────────────────────
@@ -201,8 +209,11 @@ public:
     constexpr Array() = default;
     constexpr Array(View<T,Rank> v, const char* label) : v_(v), label_(label) {}
 
-    constexpr View<T, Rank> view()  const { return v_; }              // kernels see this
-    constexpr View<const T, Rank> cview() const;                      // read-only kernels
+    // Named `kernel_view`, not `view` -- see "the gate has a hole" below.
+    constexpr View<T, Rank> kernel_view() const { return v_; }
+    constexpr View<const T, Rank> ckernel_view() const {               // read-only kernels
+        return View<const T, Rank>(v_.data_handle(), v_.mapping());
+    }
 
     // Host subscript. A COMPILE ERROR on device storage -- not a fault, not a runtime
     // guard. ASCII only: nvc++'s EDG frontend renders non-ASCII as '???'.
@@ -214,7 +225,9 @@ public:
     }
 
     constexpr Index extent(int r) const { return v_.extent(r); }
-    constexpr std::size_t bytes() const;
+    // required_span_size(), not the product of extents -- they differ under any padded
+    // layout, and `copy` sizes its memcpy from this.
+    constexpr std::size_t bytes() const { return sizeof(T) * v_.mapping().required_span_size(); }
     constexpr const char* label() const { return label_; }
     static constexpr DType dtype() { return dtype_of<T>(); }
 };
@@ -229,8 +242,35 @@ Four things the previous draft got wrong, all verified by the reviewer:
 - **A public constructor**, or the Arena (workstream 03) cannot build one.
 - **`dtype_of` defined**, not just declared — the C ABI (workstream 05) calls it.
 
+`cview()` and `bytes()` were *declared* in that draft and never defined, so both linked
+only if nobody called them. They have bodies now.
+
 There is no `lo()`/`hi()`. Zero-based means the lower bound is always 0, and the interior
 box belongs to `Region`, not to the field.
+
+### 4.0 The gate has a hole, and it is named rather than closed
+
+`static_assert` on `operator[]` does not make host access to device storage impossible —
+it makes it *inconvenient*. Handing out the underlying `mdspan` and subscripting that is
+legal, because `View` subscript is unconditional:
+
+```cpp
+d.kernel_view()[1, 2]        // compiles. Runs on GH200. Segfaults on V100.
+```
+
+Verified: it compiles clean with no cast and no `#ifdef`. Note the asymmetry — the safe
+path (`mirror` then `copy`) costs two calls, the bypass costs zero.
+
+Closing it in the type system would mean returning a distinct `DeviceView` that is not an
+`mdspan`, which forfeits the trivially-copyable-into-kernels property that is the whole
+reason `View` is an `mdspan`. That trade is not worth it. So the hole is closed by
+**naming and lint** instead: the accessor is `kernel_view()`, which reads wrong at a host
+call site, and a pre-commit hook rejects `kernel_view()` outside `src/physics/` kernel
+bodies and `src/device/` — the same grep-bannable enforcement §5.1 already applies to
+`debug_`.
+
+Stating it here matters more than the mechanism: a gate advertised as airtight and known
+to leak is worse than a gate documented as a speed bump.
 
 ### 4.1 `Loc` is a template parameter; `Parity` is not
 
@@ -293,15 +333,26 @@ separately. Do not put static extents on `Array`.
 ## 5. `mirror` and `copy`
 
 ```cpp
-// Identity when a host read is free -- host build, OR a coherent device build.
+// ALWAYS returns Space::Host in the TYPE. The identity lives in the IMPLEMENTATION:
+// on a host build or a coherent device build this allocates nothing, returns the same
+// data_handle(), and the following `copy` is a no-op.
 template <class T, int R, Space S, Loc L>
-auto mirror(const Array<T,R,S,L>& a, ScratchScope& scratch)
-    -> std::conditional_t<mirror_is_identity(S), Array<T,R,S,L>, Array<T,R,Space::Host,L>>;
+Array<T,R,Space::Host,L> mirror(const Array<T,R,S,L>& a, ScratchScope& scratch);
 
 // SYNCHRONISES before returning. No-op when dst and src share a data handle.
 template <class T, int R, Space D, Space Sr, Loc L>
 void copy(const Array<T,R,D,L>& dst, const Array<T,R,Sr,L>& src);
 ```
+
+> **Why not `conditional_t<mirror_is_identity(S), …>`.** The previous draft returned the
+> *source* type when the mirror was free, so on a coherent build `mirror` handed back an
+> `Array<…, Space::Device, …>` — which `host_subscriptable` then refuses to subscript,
+> because that predicate is strict regardless of hardware (§2). The two predicates
+> annihilated each other at the seam: **the canonical read-back below stopped compiling
+> under `TC_COHERENT_MEMORY`**, i.e. on the exact machine the optimisation exists for.
+> Verified by compiling it. Keeping the identity in the implementation preserves both
+> advertised properties — zero allocation *and* a host-subscriptable result — and deletes
+> the `conditional_t`.
 
 `copy` **synchronises**. `do_concurrent` is contractually async
 ([`02_DEVICE.md`](../plans/02_DEVICE.md)), so a read-back that did not sync would be racy
@@ -309,14 +360,15 @@ on every discrete device — and this is the sample everyone copies:
 
 ```cpp
 auto hh = mirror(h, scratch);
-copy(hh, h);                                  // syncs
+copy(hh, h);                                  // syncs; a no-op if mirror was the identity
 for (Index j = ny_lo; j <= ny_hi; ++j)
     for (Index i = nx_lo; i <= nx_hi; ++i) out << hh[i, j];
 ```
 
 `mirror_is_identity` is what makes GH200 free (measured host-touch penalty 1.1×) while
-V100 (4.1×) and PVC (15.4×) stage. Note it is deliberately **not** the same predicate as
-the subscript gate — see §2.
+V100 (4.1×) and PVC (15.4×) stage. It is now a `constexpr` branch **inside** `mirror`'s
+body, not a switch on its return type — and it is deliberately **not** the same predicate
+as the subscript gate (§2). One call site, one spelling, on every machine.
 
 ### 5.0 Initialization — on the device, asynchronously, poisoned by default
 
@@ -377,8 +429,25 @@ fills rather than serialising behind them.
 ### 5.1 Debug escapes
 
 ```cpp
-template <class T, int R, Loc L> class HostArray;   // OWNS its memory (vector-backed),
-                                                    // so it outlives Arena::seal()
+// OWNS its memory, so it outlives Arena::seal(). Given a body here because a
+// forward declaration makes debug_snapshot's return type incomplete -- an error at
+// every CALL site, not a deferred link error, so no consumer can be written against it.
+template <class T, int R, Loc L = Loc::Center>
+class HostArray {
+    std::vector<T>  storage_;
+    View<T, R>      v_{};
+public:
+    HostArray() = default;
+    explicit HostArray(std::dextents<Index,R> ext)
+        : storage_(View<T,R>::mapping_type(ext).required_span_size()),
+          v_(storage_.data(), ext) {}
+
+    View<T,R> view() const { return v_; }
+    operator Array<T,R,Space::Host,L>() const { return {v_, "host-snapshot"}; }
+    template <class... I> T& operator[](I... idx) { return v_[idx...]; }
+    Index extent(int r) const { return v_.extent(r); }
+};
+
 template <class T, int R, Space S, Loc L>
 HostArray<T,R,L> debug_snapshot(const Array<T,R,S,L>&);
 
@@ -398,36 +467,70 @@ the cost that must stay visible.
 
 ## 6. Slicing
 
-`std::submdspan` (C++26) is specified for `layout_left`, so it works on `View` with no
-customisation point of our own — one of the concrete gains from conforming.
+Everything here returns an `Array`, whose `View` is `layout_left`. **That fixes what can
+be sliced**, and the previous draft's `subbox` ignored it.
 
 ```cpp
+// TRAILING dimensions only: the box must be FULL in dims 0..R-2. Renamed from `subbox`
+// to say so at the call site.
 template <class T, int R, Space S, Loc L>
-Array<T,R,S,L> subbox(const Array<T,R,S,L>&, Region);     // general case
+Array<T,R,S,L> window(const Array<T,R,S,L>&, Region);
 template <class T, Space S, Loc L>
 Array<T,2,S,L> layer (const Array<T,3,S,L>&, Index k);    // rank-reducing
 template <class T, Space S, Loc L>
 Array<T,3,S,L> tracer(const Array<T,4,S,L>&, Index t);    // CONTIGUOUS -- bundle is slowest
 ```
 
-Until `submdspan` ships, implement these three by hand against `layout_left` (offset +
-extents); the migration is then a genuine one-liner each, which the previous draft claimed
-prematurely for a custom layout where it would have been false.
+> **Why not a general sub-box.** A box restricted in dimension 0 keeps the *parent's*
+> stride `n0` in dimension 1, while a `layout_left` mapping of the sub-extents demands
+> stride `i1-i0`. Those agree only when the box is full in every dimension but the
+> slowest. Measured: parent 16×8, box i∈[2,9] j∈[1,6] → **40 of 48 elements wrong**.
+> Expressing it needs `layout_stride`, which would have to enter `View` itself and take
+> the coalescing contract and the trivially-copyable-into-kernels property with it. Not
+> worth it for a slice nothing in D1 asks for.
+>
+> **`submdspan` would not have rescued it either**: for exactly this case it returns a
+> `layout_stride` mapping, so the promised "one-liner migration" would have changed the
+> return type. `layer` and `tracer` *are* representable (verified contiguous, 0
+> mismatches) — they slice the slowest axis, which is the case that stays `layout_left`.
+
+The i/j restriction costs nothing in practice, because **that is `Region`-as-loop-bound's
+job, not `window`'s** — §6.1. Comm/compute overlap needs the array whole and the *loop*
+narrowed, which is the opposite of taking a sub-box.
+
+`std::submdspan` is C++26 and exists on **no toolchain in the matrix today** (verified:
+`__cpp_lib_submdspan` undefined, no `submdspan.h` in libc++ 21). All three are hand-rolled
+against `layout_left` — offset plus extents, a few lines each — and the eventual migration
+is a one-liner for `layer` and `tracer` only.
 
 **`column` is the exception**, because it walks the slowest axis and is therefore strided:
 
 ```cpp
 template <class T> class ColumnView {
-    T* base_; Index stride_;
+    T* base_ = nullptr; Index stride_ = 1;
 public:
+    ColumnView() = default;
+    TC_KERNEL ColumnView(T* base, Index stride) : base_(base), stride_(stride) {}
     TC_KERNEL T& operator[](Index k) const { return base_[k * stride_]; }
 };
+
+// The factory. `a` is the (cell, level) scratch; `c` selects the column.
+template <class T, Space S, Loc L>
+TC_KERNEL ColumnView<T> column(const Array<T,2,S,L>& a, Index c);
 ```
+
+The explicit constructor is not decoration: private members make it a non-aggregate, so
+without one it is unconstructible by anything — brace-init included. That is the identical
+defect §4 records having already fixed once on `Array`, repeated verbatim on the next type.
 
 Backing scratch is `(cell, level)` — **cell fast** — so adjacent threads touch adjacent
 memory at each `k`. The natural-looking `(level, cell)` gives each thread a contiguous
-column and destroys coalescing across threads. `stride_` must account for any padding
-(`ld * extent(1)`, not `extent(0) * extent(1)`).
+column and destroys coalescing across threads. `stride_` is `a.extent(0)`; it is taken
+from the mapping rather than computed, so a padded layout stays correct for free.
+
+**`k` runs `0 .. nz-1` inside a column kernel** — the surrounding array is halo'd, the
+column scratch is not, and there is no stencil in the vertical to need a halo. Asserted at
+the factory.
 
 ### 6.1 `Region` has two uses — do not conflate them
 
@@ -443,11 +546,15 @@ mandatory; only its location is open, and it belongs to the launcher.
 
 ```cpp
 // PREFERRED -- launcher flattens, walks, unflattens; the body sees indices.
-device::do_concurrent(tag, region, stencil, views, [] TC_KERNEL (Index i, Index j) {...});
+device::do_concurrent(tag, region, stencil, views, [=] TC_KERNEL (Index i, Index j) {...});
 
 // For genuinely elementwise work and reductions.
-device::do_concurrent(tag, count, [] TC_KERNEL (Index n) {...});
+device::do_concurrent(tag, count, [=] TC_KERNEL (Index n) {...});
 ```
+
+`[=]`, not `[]` — a kernel body that captures nothing cannot touch a view, so the
+empty-capture spelling in the previous draft was ill-formed at every real call site. By
+value, always: a device kernel must not capture a host frame by reference.
 
 Three reasons: `i = n % nx` is a correctness-for-performance invariant (fifty bodies is
 fifty chances to write `n / nx` and lose coalescing with no wrong answer, only a slow
@@ -479,7 +586,14 @@ template <class T, int Rank, Space S> struct VectorField<T, Rank, Stagger::C, S>
     Array<T,Rank,S,Loc::XFace> u;
     Array<T,Rank,S,Loc::YFace> v;
 };
-// B: both Loc::Corner.  A: both Loc::Center.
+template <class T, int Rank, Space S> struct VectorField<T, Rank, Stagger::B, S> {
+    Array<T,Rank,S,Loc::Corner> u;
+    Array<T,Rank,S,Loc::Corner> v;
+};
+template <class T, int Rank, Space S> struct VectorField<T, Rank, Stagger::A, S> {
+    Array<T,Rank,S,Loc::Center> u;
+    Array<T,Rank,S,Loc::Center> v;
+};
 
 template <class T, Space S = Space::Device> using CVector2 = VectorField<T,2,Stagger::C,S>;
 template <class T, Space S = Space::Device> using CVector3 = VectorField<T,3,Stagger::C,S>;
@@ -535,8 +649,18 @@ struct FieldDesc {
 static_assert(std::is_standard_layout_v<FieldDesc>);
 ```
 
-Fixed-width members throughout, `extern "C"`, strides in **bytes** because that is what
-numpy expects. `static_assert(Rank <= 4)` wherever a `FieldDesc` is produced.
+`extern "C"`, standard-layout (verified; `sizeof == 88` on arm64, no interior padding),
+strides in **bytes** because that is what numpy expects. `static_assert(Rank <= 4)`
+wherever a `FieldDesc` is produced.
+
+Every member is fixed-width **except `data`**, which is a pointer and therefore
+platform-width. That is fine — the ABI is same-process, ctypes reads it as `c_void_p` —
+but the previous draft's blanket "fixed-width members throughout" was false and would have
+misled anyone sizing the struct from the field list.
+
+**For `rank < 4`, `extent[rank..3]` and `stride[rank..3]` are zero.** Unspecified padding
+in a struct crossing to Python is how a consumer ends up looping to 4 and building a
+degenerate view; zero is the value that makes that loop harmless and the mistake visible.
 
 ---
 
@@ -583,9 +707,7 @@ the availability block that decides it.
 2. **`TC_COHERENT_MEMORY` detection.** Build flag, or a `capabilities()` query latched at
    `device::initialize`? A flag is simpler and matches the per-target build matrix, but a
    mismatch between flag and hardware silently makes `mirror` wrong.
-3. **`ColumnView` subscript base.** Whether `k` runs `0..nz-1` or `ng..ng+nz-1` inside a
-   column kernel — the surrounding array is halo'd, the scratch need not be. Pick one and
-   assert it.
+*(Decision 3, `ColumnView`'s subscript base, is settled in §6: `k` runs `0..nz-1`.)*
 
 ---
 
@@ -596,8 +718,19 @@ the availability block that decides it.
   ranks 2–4, `float` and `double`, and as a member of a default-constructed aggregate.
 - `TC_NEGATIVE` build fails with the named `static_assert` under nvc++ **and** any host
   compiler with `<mdspan>` (not "g++", which has none until GCC 16).
-- A hardened build (`_LIBCPP_HARDENING_MODE_DEBUG`) runs the full test suite **without
-  trapping** — the check that would have caught the previous draft's blocker.
+- **The hardened run, two-sided.** Configure with
+  `-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG` (libc++) or `-D_GLIBCXX_ASSERTIONS`
+  (libstdc++), applied to the shared flags target so it reaches doctest too — a
+  per-TU mismatch is an ODR violation. The suite must pass **and**
+  `test_hardening_positive_control`, a deliberate `v[extent(0)+4, 0]`, must abort. Both
+  halves are required: a suite with no out-of-bounds access passes whether hardening is
+  live or not, so the control is what distinguishes "clean" from "flag misspelled".
+  > `_LIBCPP_HARDENING_MODE_DEBUG` is a **value**; the switch is `_LIBCPP_HARDENING_MODE`.
+  > The previous draft used the value as the flag. Measured: `-D_LIBCPP_HARDENING_MODE_DEBUG`
+  > alone gives `exit=0` on a deliberate OOB — the gate silently certified nothing.
 - `mirror` of host-accessible storage returns the same data handle and allocates nothing;
-  under `TC_COHERENT_MEMORY` that includes `Space::Device`.
+  under `TC_COHERENT_MEMORY` that includes `Space::Device` **as the source**, with the
+  result still `Space::Host` and still subscriptable (§5).
+- The canonical read-back sample of §5 compiles **both** with and without
+  `TC_COHERENT_MEMORY`. It did not, before.
 - Signatures published to plans 02–05, and those plans updated in the same commit.
