@@ -6,15 +6,18 @@ Three files, no configure step, one question:
 > allocator — no managed memory, no implicit migration?**
 
 That is the thesis the whole design rests on: *the language expresses parallelism,
-we express memory, native kernels insert rather than replace.* Two thirds of the
-matrix are already proven; one cell is not.
+we express memory, native kernels insert rather than replace.* **Answered: yes,
+everywhere it was asked.**
 
 | toolchain | allocator | result |
 |---|---|---|
+| `nvc++ -stdpar=gpu -gpu=mem:separate`, cc70 (V100) | `cudaMalloc` | **PASS** |
 | `nvc++ -stdpar=gpu -gpu=mem:separate`, cc90 | `cudaMalloc` | **PASS** |
 | `hipcc --hipstdpar` | `hipMalloc` | **PASS** |
 | `icpx -fsycl` + oneDPL | `sycl::malloc_device` | **PASS** |
-| cc70 (V100) | `cudaMalloc` | pending — environment, not design |
+
+Four for four, three vendors, two NVIDIA generations. The first cc70 attempt failed on
+Gadi and passed on another Volta — environment, not design.
 
 **Answered: yes, on all three vendors.** The AMD cell was the one in genuine doubt.
 `--hipstdpar` is not hipified CUDA — it leans on HMM/XNACK to make *ordinary host

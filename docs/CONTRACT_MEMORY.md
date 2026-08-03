@@ -40,6 +40,7 @@ over pointers from `cudaMalloc` / `hipMalloc` / `sycl::malloc_device`:
 
 | toolchain | result |
 |---|---|
+| `nvc++ -stdpar=gpu -gpu=mem:separate` (cc70, V100) | PASS |
 | `nvc++ -stdpar=gpu -gpu=mem:separate` (cc90) | PASS |
 | `hipcc --hipstdpar` | PASS |
 | `icpx -fsycl` + oneDPL | PASS |

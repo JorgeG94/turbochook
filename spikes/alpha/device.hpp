@@ -15,14 +15,21 @@
 // native device allocator (cudaMalloc / hipMalloc / sycl::malloc_device),
 // with NO managed memory and NO implicit migration?
 //
-//   nvc++ -stdpar=gpu -gpu=mem:separate + cudaMalloc      proven (spike 02)
-//   icpx -fsycl + oneDPL + sycl::malloc_device            proven (spike 05)
-//   hipcc --hipstdpar + hipMalloc                         <-- UNKNOWN. This spike.
+// ANSWERED, 2026-08-03 -- yes, on every toolchain asked:
 //
-// hipstdpar is NOT hipified CUDA. It leans on HMM/XNACK to make ordinary host
-// allocations device-reachable, i.e. its design assumption is that you did NOT
-// hand-manage memory. So "CUDA is basically HIP", true for __global__ kernels,
-// does not transfer to this path. That is the cell worth a real machine.
+//   nvc++ -stdpar=gpu -gpu=mem:separate + cudaMalloc      PASS (cc70 and cc90)
+//   hipcc --hipstdpar + hipMalloc                         PASS
+//   icpx -fsycl + oneDPL + sycl::malloc_device            PASS
+//
+// The AMD cell was the one in genuine doubt. hipstdpar is NOT hipified CUDA: it
+// leans on HMM/XNACK to make ORDINARY HOST allocations device-reachable, so its
+// design assumption is that you did NOT hand-manage memory. Had it required
+// interposing malloc, the arena would fight it rather than compose with it. It
+// accepts hipMalloc'd pointers -- so "CUDA is basically HIP" extends to the
+// stdpar path too, not only to __global__ kernels.
+//
+// Keep this file runnable: it is the regression test for the thesis, and the
+// first thing to re-run when a toolchain moves.
 // =============================================================================
 #pragma once
 
