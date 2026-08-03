@@ -5,12 +5,19 @@
 
 #include <doctest/doctest.h>
 #include <cmath>
+#include <limits>
 #include "core/types.hpp"
 #include "lib/arena.hpp"
 #include "numerics/parallel.hpp"
 #include "mesh/cartesian_mesh.hpp"
 #include "physics/state/baro_state.hpp"
 #include "diag/diagnostics.hpp"
+
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_diag {
 
 TEST_CASE("total_mass = Σ η·area for a uniform free surface") {
     const tc::Index nx = 6, ny = 4;
@@ -62,7 +69,14 @@ TEST_CASE("any_nonfinite: clean state passes, a poked NaN is caught") {
 
     // poke a NaN into one u-face → the gate must fire
     tc::for_each_cell(m.extent_x(tc::Loc::XFace), m.extent_y(tc::Loc::XFace),
-                      [=](tc::Index i, tc::Index j) { if (i == 1 && j == 2) u[i, j] = std::nan(""); });
+                      [=](tc::Index i, tc::Index j) {
+                          // quiet_NaN(), NOT std::nan(""): the latter is a runtime
+                          // function that PARSES a string, and SYCL device code has
+                          // no such symbol ("undefined function nan"). quiet_NaN is
+                          // constexpr and works in every backend's device code.
+                          if (i == 1 && j == 2)
+                              u[i, j] = std::numeric_limits<tc::Real>::quiet_NaN();
+                      });
     CHECK(tc::any_nonfinite(s, m) == true);
 }
 
@@ -99,18 +113,23 @@ TEST_CASE("zonal_mean: length-weighted mean over x gives a y-profile") {
     tc::CartesianMesh m(nx, ny, 100.0, 50.0);
     tc::Arena a(4u << 20);
     tc::BaroState s = tc::allocate_baro_state(a, m);
-    std::vector<Real> prof(ny);
+    // zonal_mean WRITES this from a device kernel -- reduce.hpp says so outright
+    // ("`out` must be device-accessible when the backend offloads"). A
+    // std::vector is not, on any backend but nvc++. Take it from the arena.
+    Real* prof = a.alloc2d(ny, 1).data_handle();
 
     // constant along x, varying with y ⇒ mean = the value itself
     tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
                       [=](Index i, Index j) { s.eta[i, j] = 10.0 + j; });
     const tc::Field2 h = s.eta;
-    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof);
     for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx(10.0 + j));
 
     // linear in x (f=i) ⇒ mean = (nx-1)/2 for every row (uniform dx)
     tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
                       [=](Index i, Index j) { s.eta[i, j] = Real(i); });
-    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof);
     for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx((nx - 1) / 2.0));
 }
+
+}  // namespace tu_test_diag

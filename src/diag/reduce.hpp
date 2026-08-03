@@ -34,8 +34,7 @@ template <Loc L = Loc::Center, Mesh M, class Cell>
 Real global_integral(const M& mesh, Cell f) {
     const M m = mesh;
     const Index nx = m.extent_x(L), ny = m.extent_y(L);
-    auto ids = std::views::iota(Index{0}, nx * ny);
-    return std::transform_reduce(par, ids.begin(), ids.end(), Real(0), std::plus<Real>{},
+    return do_reduce(nx * ny, Real(0), std::plus<Real>{},
         [=](Index n) { const Index i = n % nx, j = n / nx;
                        return f(i, j) * m.area(L, i, j) * m.wet(L, i, j); });
 }
@@ -45,9 +44,7 @@ template <Loc L = Loc::Center, Mesh M, class Cell>
 Real global_max(const M& mesh, Cell f) {
     const M m = mesh;
     const Index nx = m.extent_x(L), ny = m.extent_y(L);
-    auto ids = std::views::iota(Index{0}, nx * ny);
-    return std::transform_reduce(par, ids.begin(), ids.end(),
-        std::numeric_limits<Real>::lowest(),
+    return do_reduce(nx * ny, std::numeric_limits<Real>::lowest(),
         [](Real a, Real b) { return a > b ? a : b; },
         [=](Index n) { const Index i = n % nx, j = n / nx; return f(i, j); });
 }
@@ -62,8 +59,7 @@ template <Loc L = Loc::Center, Mesh M, class Cell>
 void zonal_mean(const M& mesh, Cell f, Real* out) {
     const M m = mesh;
     const Index nx = m.extent_x(L), ny = m.extent_y(L);
-    auto js = std::views::iota(Index{0}, ny);
-    std::for_each(par, js.begin(), js.end(), [=](Index j) {
+    do_concurrent(ny, [=](Index j) {
         Real num = 0, den = 0;
         for (Index i = 0; i < nx; ++i) {
             const Real w = m.dx(L, i, j) * m.wet(L, i, j);

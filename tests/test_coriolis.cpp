@@ -19,6 +19,12 @@
 #include "physics/momentum/coriolis.hpp"
 #include "physics/momentum/pgf.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_coriolis {
+
 using tc::Real;
 using tc::Index;
 
@@ -93,3 +99,5 @@ TEST_CASE("Sadourny + PGF: a geostrophic zonal jet is in exact balance (k≈0)")
         for (Index i = 0; i < nx; ++i)
             CHECK(std::abs(kv[i, j]) < 1e-10 * scale);          // PGF + Coriolis cancel to eps
 }
+
+}  // namespace tu_test_coriolis

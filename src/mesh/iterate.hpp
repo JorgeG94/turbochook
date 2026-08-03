@@ -51,8 +51,7 @@ void for_each_x_face(const M& mesh, F f) {
     const Index i0 = per ? 0 : 1, i1 = per ? nx : nx - 1;   // inclusive face range
     const Index nif = i1 - i0 + 1;
     if (nif <= 0) return;
-    auto ids = std::views::iota(Index{0}, nif * ny);
-    std::for_each(par, ids.begin(), ids.end(), [=](Index n) {
+    do_concurrent(nif * ny, [=](Index n) {
         const Index i = i0 + n % nif;
         const Index j = n / nif;
         f(FaceView{ .i = i, .j = j,
@@ -72,8 +71,7 @@ void for_each_y_face(const M& mesh, F f) {
     const Index j0 = per ? 0 : 1, j1 = per ? ny : ny - 1;
     const Index njf = j1 - j0 + 1;
     if (njf <= 0) return;
-    auto ids = std::views::iota(Index{0}, nx * njf);
-    std::for_each(par, ids.begin(), ids.end(), [=](Index n) {
+    do_concurrent(nx * njf, [=](Index n) {
         const Index i = n % nx;
         const Index j = j0 + n / nx;
         f(FaceView{ .i = i, .j = j,

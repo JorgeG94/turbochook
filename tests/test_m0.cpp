@@ -23,6 +23,12 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/core/ocean_core.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_m0 {
+
 TEST_CASE("Arena hands out usable layout_left Field views") {
     tc::Arena arena(1u << 20);              // 1 MiB
     const tc::Index nx = 8, ny = 5;
@@ -45,29 +51,35 @@ TEST_CASE("Arena refuses to overflow (fails loud)") {
     CHECK_THROWS_AS(tiny.alloc2d(1000, 1000), tc::Error);
 }
 
-TEST_CASE("saxpy via tc::par matches the serial result") {
+TEST_CASE("saxpy via tc::do_concurrent matches the serial result") {
     const tc::Index N = 10'000;
     const tc::Real  a = 3.0;
-    std::vector<tc::Real> x(N), y(N);
-    tc::Real* xp = x.data(); tc::Real* yp = y.data();
+    // ARENA, not std::vector: a device kernel writes these. Plain host heap is
+    // reachable from the device only under `nvc++ -stdpar`, which promotes it to
+    // managed; hipstdpar faults and oneDPL fails. The arena is managed memory, so
+    // it is the portable place for anything a kernel touches. (Same root cause as
+    // the arena's own fix -- see lib/device_alloc.hpp.)
+    tc::Arena arena(4u << 20);
+    tc::Real* xp = arena.alloc2d(N, 1).data_handle();
+    tc::Real* yp = arena.alloc2d(N, 1).data_handle();
 
     tc::for_each_index(N, [=](tc::Index i) { xp[i] = tc::Real(i); yp[i] = tc::Real(2 * i); });
     tc::for_each_index(N, [=](tc::Index i) { yp[i] = a * xp[i] + yp[i]; });
 
     for (tc::Index i = 0; i < N; ++i)
-        CHECK(y[i] == doctest::Approx(a * tc::Real(i) + tc::Real(2 * i)));
+        CHECK(yp[i] == doctest::Approx(a * tc::Real(i) + tc::Real(2 * i)));
 }
 
 TEST_CASE("parallel reduction equals the serial reduction") {
     const tc::Index N = 100'000;
-    std::vector<tc::Real> y(N);
-    tc::Real* yp = y.data();
+    tc::Arena arena(4u << 20);                     // managed: a kernel writes it
+    tc::Real* yp = arena.alloc2d(N, 1).data_handle();
     tc::for_each_index(N, [=](tc::Index i) { yp[i] = tc::Real(i % 13); });
 
-    auto ids = std::views::iota(tc::Index{0}, N);
-    const tc::Real par_sum = std::transform_reduce(
-        tc::par, ids.begin(), ids.end(), tc::Real(0),
-        std::plus<tc::Real>{}, [=](tc::Index i) { return yp[i]; });
+    // Through tc::do_reduce, not a bare std::transform_reduce: oneDPL needs its own
+    // algorithm and device policy, and do_reduce is the one place that knows.
+    const tc::Real par_sum = tc::do_reduce(
+        N, tc::Real(0), std::plus<tc::Real>{}, [=](tc::Index i) { return yp[i]; });
 
     tc::Real ser_sum = 0;
     for (tc::Index i = 0; i < N; ++i) ser_sum += tc::Real(i % 13);
@@ -89,3 +101,5 @@ TEST_CASE("the compile-time policy stack composes and runs (stubs)") {
     CHECK(core.state().u.extent(0)   == 17);   // x-faces = nx+1
     CHECK(core.state().v.extent(1)   == 9);    // y-faces = ny+1
 }
+
+}  // namespace tu_test_m0

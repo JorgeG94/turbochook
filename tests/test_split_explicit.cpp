@@ -16,6 +16,12 @@
 #include "numerics/split_explicit.hpp"
 #include "physics/core/split_multilayer_core.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_split_explicit {
+
 using tc::Real;
 using tc::Index;
 
@@ -131,3 +137,5 @@ TEST_CASE("split two-layer: outer scheme is a swappable policy (RK2 also recover
     REQUIRE(t_cross > 0);
     CHECK(Real(4) * t_cross == doctest::Approx(T).epsilon(0.05));
 }
+
+}  // namespace tu_test_split_explicit

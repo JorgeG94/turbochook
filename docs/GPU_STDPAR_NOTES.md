@@ -70,6 +70,33 @@ not the language.
 - **C++23 stdlib gaps under nvc++** (`std::mdspan` / `std::print` present but with undefined
   feature-test macros, or absent on an older host stdlib) — a real M0 risk; gate on
   `__has_include`, not the feature macro, and keep the hand-rolled fallback.
+- **SYCL: a kernel's IDENTITY is its C++ mangled name, so internal linkage is a trap.**
+  An unnamed-lambda kernel is named by the mangled type of its closure, and that mangling
+  embeds the *enclosing* function's name. C++ mangling does not encode the translation unit,
+  so a lambda inside an internal-linkage function (`static void f()`, or anything in an
+  anonymous namespace — which mangles as `_GLOBAL__N_1` in *every* TU) gets the SAME kernel
+  name in every `.cpp` that has a same-named function. Two different kernels then share one
+  name in the linked binary and the runtime launches whichever image it finds first:
+  `UR_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE` (level-zero error 31) where the capture
+  sizes differ, and **silently wrong numbers where they happen to match**.
+  Observed on Aurora (icpx 2025.3 / PVC Max 1550): doctest's `TEST_CASE` expands to
+  `static void DOCTEST_ANON_FUNC_<n>` off a counter that restarts per file, so 76 kernel
+  names collided across the 18 test TUs and 24 of 67 tests failed. The fix is to give each
+  TU a **named namespace** (`namespace tu_test_pgf { … }`) so the file's identity enters
+  the mangling. Neither `-fsycl-unnamed-lambda` nor `-fsycl-unique-prefix` nor
+  `-funique-internal-linkage-names` affects the `_ZTS…` kernel name — this is a
+  source-level property, not a flag.
+  The collision is detectable **statically**, no GPU needed — duplicate kernel names across
+  objects are duplicate `_ZTS` strings:
+
+  ```bash
+  for o in build/CMakeFiles/tc_tests.dir/tests/*.o; do
+      strings "$o" | grep '^_ZTS' | sort -u
+  done | sort | uniq -d | grep -E 'DOCTEST_ANON_FUNC|_GLOBAL__N_'   # must print nothing
+  ```
+
+  (Names shared across TUs that are rooted in a `tc::` header template are fine — those are
+  the *same* instantiation, hence the same kernel.)
 
 ## The meta-lesson
 

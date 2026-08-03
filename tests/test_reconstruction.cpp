@@ -14,6 +14,12 @@
 #include "core/types.hpp"
 #include "physics/continuity/reconstruction.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_reconstruction {
+
 using tc::Real;
 
 namespace {
@@ -148,3 +154,5 @@ TEST_CASE("Weno: constant → constant, and a monotone step stays in-bounds (non
     CHECK(r >= Real(-1e-9));            // no undershoot below the stencil min
     CHECK(r <= Real(1) + Real(1e-9));   // no overshoot above the stencil max
 }
+
+}  // namespace tu_test_reconstruction

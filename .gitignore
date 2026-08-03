@@ -11,3 +11,4 @@ tmp/
 *.bin
 *.csv
 *.nc
+spikes/alpha/build/

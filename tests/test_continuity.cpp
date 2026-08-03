@@ -17,6 +17,12 @@
 #include "physics/state/baro_state.hpp"
 #include "physics/continuity/continuity.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_continuity {
+
 using tc::Real;
 using tc::Index;
 
@@ -110,3 +116,5 @@ TEST_CASE("PpmContinuity conserves mass: Σ area·∂h/∂t ≈ 0 (telescoping)"
     CHECK(activity > 0.0);                          // the test is actually exercising flux
     CHECK(std::abs(net) / activity < 1e-12);        // conserved to FP64 machine-eps
 }
+
+}  // namespace tu_test_continuity

@@ -3,7 +3,7 @@
 //
 // What this exercises (ROADMAP M0):
 //   • the tc::par execution-policy seam + for_each_index  (does it offload?)
-//   • std::transform_reduce over a big array via tc::par   (parallel reduction)
+//   • tc::do_reduce over a big array                       (parallel reduction)
 //   • the Arena + Field views                              (the memory model)
 //   • the logger + profiler                                (host infrastructure)
 //   • that the whole compile-time policy stack COMPOSES + runs (BarotropicPoC)
@@ -14,7 +14,7 @@
 // =============================================================================
 
 #include <vector>
-#include <numeric>       // std::transform_reduce, std::accumulate
+#include <numeric>       // std::accumulate (the host-side oracle)
 #include <ranges>
 #include <cmath>
 
@@ -31,9 +31,14 @@ int main() try {
     // ── 1. saxpy + parallel reduction over a big array ───────────────────────
     const tc::Index N = 8'000'000;
     const tc::Real  a = 2.5;
-    std::vector<tc::Real> x(N), y(N);          // managed memory under nvc++ -stdpar
-    tc::Real* xp = x.data();                   // capture raw pointers, never the vectors
-    tc::Real* yp = y.data();
+    // ARENA, not std::vector. The comment here used to read "managed memory under
+    // nvc++ -stdpar", and that was the whole problem: it is managed ONLY there,
+    // because nvc++ promotes the heap for you. hipstdpar faults on it and oneDPL
+    // fails outright. The arena allocates managed memory explicitly, on every
+    // backend -- see lib/device_alloc.hpp.
+    tc::Arena arena(2u * N * sizeof(tc::Real) + (1u << 20));
+    tc::Real* xp = arena.alloc2d(N, 1).data_handle();   // raw pointers cross into
+    tc::Real* yp = arena.alloc2d(N, 1).data_handle();   // kernels, never containers
 
     {
         TC_PROFILE("init");
@@ -50,9 +55,10 @@ int main() try {
     tc::Real dev_sum;
     {
         TC_PROFILE("reduce");
-        auto ids = std::views::iota(tc::Index{0}, N);
-        dev_sum = std::transform_reduce(tc::par, ids.begin(), ids.end(), tc::Real(0),
-                                        std::plus<tc::Real>{}, [=](tc::Index i) { return yp[i]; });
+        // via tc::do_reduce: oneDPL needs its own algorithm and device policy, and
+        // do_reduce is the single place that knows which backend is in play.
+        dev_sum = tc::do_reduce(N, tc::Real(0), std::plus<tc::Real>{},
+                                [=](tc::Index i) { return yp[i]; });
     }
 
     // Serial reference on the host — the correctness oracle.

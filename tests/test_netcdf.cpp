@@ -19,6 +19,12 @@
 #include "physics/state/layered_state.hpp"
 #include "numerics/parallel.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_netcdf {
+
 TEST_CASE("netcdf: RAII define/write/read round-trip, layout-preserving") {
     std::system("mkdir -p tmp");
     const char* path = "tmp/test_nc_roundtrip.nc";
@@ -141,4 +147,6 @@ TEST_CASE("netcdf: OceanOutput zeta = relative vorticity of a shear flow") {
             CHECK(z[std::size_t(j) * nx + i] == doctest::Approx(-shear).epsilon(1e-6));
     std::remove(path);
 }
+
+}  // namespace tu_test_netcdf
 #endif  // TC_HAVE_NETCDF

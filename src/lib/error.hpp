@@ -9,7 +9,7 @@
 // use std::expected here — the host path isn't hot and exceptions are simpler.
 //
 // THE HARD CONSTRAINT: exceptions may NOT cross into a kernel.
-//   std::for_each(par_unseq, …) with a callable that throws → std::terminate,
+//   a parallel launch with a callable that throws → std::terminate,
 //   and device code can't throw at all. So: kernels are pure math and never
 //   throw; device failures (NaN, CFL blow-up) are detected by a POST-STEP host
 //   reduction over a flag/NaN buffer, and THEN thrown host-side. Device errors

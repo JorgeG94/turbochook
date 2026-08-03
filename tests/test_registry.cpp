@@ -19,6 +19,12 @@
 #include "diag/registry.hpp"
 #include "diag/quantity.hpp"
 
+// TU-UNIQUE NAMESPACE -- load-bearing, not cosmetic. SYCL names an unnamed-lambda
+// kernel by its C++ mangled type, and doctest's TEST_CASE expands to a `static
+// void DOCTEST_ANON_FUNC_<n>` whose counter restarts in every file, so kernels
+// from different test files collide on one name. See docs/GPU_STDPAR_NOTES.md.
+namespace tu_test_registry {
+
 namespace {
 using tc::Index; using tc::Loc; using tc::Field2; using tc::Real;
 
@@ -102,3 +108,5 @@ TEST_CASE("Registry: FieldDiag fill writes the expected centre buffer") {
     CHECK(buf.back()  == doctest::Approx(5.0));   // η=5 everywhere in layer 0
     CHECK(reg.fields[0].q.symbol == std::string("h"));
 }
+
+}  // namespace tu_test_registry
