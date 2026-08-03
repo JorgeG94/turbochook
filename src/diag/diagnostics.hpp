@@ -3,7 +3,7 @@
 // diag/diagnostics.hpp — device-resident reduction diagnostics (DESIGN ADR-8).
 //
 // A diagnostic is a PURE REDUCTION over (state, mesh) → a single scalar
-// (`std::transform_reduce` over a flat iota, offloading via `tc::par`). The state
+// (one `tc::do_reduce` over a flat range -- the single reduction seam). The state
 // stays DEVICE-RESIDENT — only the scalar crosses to the host. A per-step
 // full-field host copy silently reintroduces the ~100–140× migration penalty
 // (STATUS #4), so we never do that; a scalar reduction is the whole diagnostic.

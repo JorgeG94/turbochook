@@ -3,7 +3,7 @@
 //
 // What this exercises (ROADMAP M0):
 //   • the tc::par execution-policy seam + for_each_index  (does it offload?)
-//   • std::transform_reduce over a big array via tc::par   (parallel reduction)
+//   • tc::do_reduce over a big array                       (parallel reduction)
 //   • the Arena + Field views                              (the memory model)
 //   • the logger + profiler                                (host infrastructure)
 //   • that the whole compile-time policy stack COMPOSES + runs (BarotropicPoC)
@@ -14,7 +14,7 @@
 // =============================================================================
 
 #include <vector>
-#include <numeric>       // std::transform_reduce, std::accumulate
+#include <numeric>       // std::accumulate (the host-side oracle)
 #include <ranges>
 #include <cmath>
 

@@ -51,7 +51,7 @@ TEST_CASE("Arena refuses to overflow (fails loud)") {
     CHECK_THROWS_AS(tiny.alloc2d(1000, 1000), tc::Error);
 }
 
-TEST_CASE("saxpy via tc::par matches the serial result") {
+TEST_CASE("saxpy via tc::do_concurrent matches the serial result") {
     const tc::Index N = 10'000;
     const tc::Real  a = 3.0;
     // ARENA, not std::vector: a device kernel writes these. Plain host heap is
