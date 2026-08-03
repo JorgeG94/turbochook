@@ -393,15 +393,15 @@ catches it exactly.
 
 ### 1.7 Size the pools before allocating any of them
 
-A requirement is **not a number, it is a polynomial in one flexible dimension** — and the
-useful operation is inverting it:
+A requirement is **not a byte count**, because a byte count cannot answer the only
+interesting question — *"how much of the thing I can choose the size of will fit?"* It is a
+**linear function of one flexible dimension**, and the useful operation is inverting it:
 
 ```cpp
 class MemoryRequirement {
 public:
-    static MemoryRequirement Static(MemoryQuantity);          // n^0
-    static MemoryRequirement FlexLinear(MemoryQuantity);      // n^1  -- halo, edge terms
-    static MemoryRequirement FlexQuadratic(MemoryQuantity);   // n^2  -- tile interior
+    static MemoryRequirement Static(MemoryQuantity);        // independent of n
+    static MemoryRequirement FlexLinear(MemoryQuantity);    // per unit of n
 
     MemoryRequirement  operator+ (const MemoryRequirement&) const;  // BOTH live at once
     MemoryRequirement  operator| (const MemoryRequirement&) const;  // ALTERNATIVES -> max
@@ -420,28 +420,27 @@ public:
 };
 ```
 
-**`+` versus `|` is the whole point.** Two fields that coexist sum; two that are
-alternatives — a scratch buffer used by remap *or* by vmix, never both — take the max.
+**`+` versus `|` is the part with call sites today.** Two fields that coexist sum; two that
+are alternatives — a scratch buffer used by remap *or* by vmix, never both — take the max.
 Without the distinction every requirement is a worst-case sum, which over-reserves the
 scratch tier and makes the reported figure useless for deciding anything. `ScratchScope`
 nesting is exactly a `|` fold.
 
-**The flexible dimension is a tile edge.** For a tile of edge `n`: interior storage goes as
-`n^2`, halo storage as `4*n*ng`, everything else is static. So
+**The flexible dimensions here are linear.** `calculate_flex_dim` inverts
+`static + a·n ≤ available` to `n = (available − static) / a`, answering questions like
+*how many 3-D diagnostics fit in what is left*, or how many tracers, or how many columns of
+vmix scratch to process at once. D1 registers only `Static`, and a linear function with a
+zero coefficient *is* a plain quantity — so the shape costs nothing now, while retrofitting
+it would touch every `add()` call site.
 
-```
-total(n) = static + (4*ng*per_cell)*n + (per_cell*nz*nfields)*n^2
-```
-
-and `calculate_flex_dim(free)` answers *"how large a tile fits in what is left"* — the
-question a 1 km global run with 100 layers must answer, because per-column scratch for a
-full subdomain will not fit. MOM6 tiles for the same reason with a compile-time block size.
-
-**D1 does not need this.** Every requirement it registers is `Static`, and a polynomial
-with zero flex coefficients *is* a plain quantity — so the shape costs nothing now and
-retrofitting it later would touch every `add()` call site. That is the opposite trade from
-the general units library (§00), where the machinery is large and the second user is
-hypothetical.
+> **No quadratic term.** A quadratic requirement means something *pairwise* between chunk
+> elements — the shape of a quantum-chemistry integral block, where the batch is over shell
+> pairs. An ocean dycore has no such array. The one construction that would produce one is
+> tiling a subdomain (interior `n²`, halo `4n`), and that is a thing an ocean model mostly
+> should not do: re-filling halos per tile and re-reading state is expensive for a
+> bandwidth-bound stencil code, and the answer to "does not fit" is more GPUs rather than
+> smaller tiles. MOM6's blocking exists for cache and OpenMP, not to fit memory. Adding a
+> term to the polynomial later does not touch call sites, so there is nothing to pre-empt.
 
 Setup already walks the operator set to derive `ng = max(halo_width)`; the same pass sums
 every field's bytes. Checking that total against `capabilities()` **before the first
