@@ -120,6 +120,37 @@ int main(int argc, char** argv) {
         check(false, "float as well as double", "allocation failed");
     }
 
+    // ---- 5. reduction shaped like global_integral -------------------------
+    // alpha's plain reduce (check 3) already passes on every backend, yet the real
+    // tree's global_integral/global_max fail on Intel. The structural difference is
+    // that those take a CALLER-SUPPLIED functor and call it from inside the
+    // reduction's own lambda -- a lambda capturing a lambda, alongside a POD
+    // "mesh". If that is what oneDPL mishandles, it reproduces here in ten seconds
+    // instead of in a full ctest run.
+    struct FakeMesh { Index nx, ny; double cell_area; };   // trivially copyable, like the real ones
+    const FakeMesh fm{nx, ny, 0.25};
+
+    auto integrand = [=] (Index i, Index j) { return a[Index(j) * nx + i]; };
+
+    const double integ = dev::reduce<double>(n, 0.0, [=] (Index t) {
+        const Index i = t % fm.nx, j = t / fm.nx;
+        return integrand(i, j) * fm.cell_area;
+    });
+    const double integ_want = want * fm.cell_area;
+    char ibuf[128];
+    std::snprintf(ibuf, sizeof ibuf, "got %.6g want %.6g", integ, integ_want);
+    check(std::fabs(integ - integ_want) <= 1e-6 * std::fabs(integ_want),
+          "nested-functor reduction", ibuf);
+
+    // ---- 6. non-plus binop (global_max's shape) ---------------------------
+    // std::plus is special-cased by some implementations; max is not.
+    const double gmax = dev::reduce_op<double>(
+        n, -1e308, [] (double x, double y) { return x > y ? x : y; },
+        [=] (Index t) { return a[t]; });
+    std::snprintf(ibuf, sizeof ibuf, "got %.6g want %.6g", gmax, 2.0 * double(n - 1) + 1.0);
+    check(std::fabs(gmax - (2.0 * double(n - 1) + 1.0)) <= 1e-9,
+          "reduction with a custom binop", ibuf);
+
     dev::free_(a);
     dev::free_(b);
 

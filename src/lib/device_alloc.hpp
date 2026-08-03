@@ -27,6 +27,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 
 // Keyed on the EXPLICIT backend define from CMake, never on a compiler macro.
@@ -54,7 +55,21 @@ namespace tc::detail {
 // each, which is invalid on Intel and harmless everywhere else, i.e. exactly the
 // bug a single-vendor CI cannot see.
 inline sycl::queue& device_queue() {
-    static sycl::queue q{sycl::gpu_selector_v};
+    static sycl::queue q = [] {
+        sycl::queue qq{sycl::gpu_selector_v};
+        const auto d = qq.get_device();
+        // Announce the device ONCE. gpu_selector_v picks *a* GPU: on a box with an
+        // integrated device alongside the discrete one it may not be the one you
+        // meant, and fp64 support differs between them -- which shows up as wrong
+        // NUMBERS in reductions rather than as an error. Print it so a
+        // wrong-device run is visible instead of mysterious.
+        std::fprintf(stderr,
+            "[sycl] device: %s | fp64=%d | max_sub_devices=%u\n",
+            d.get_info<sycl::info::device::name>().c_str(),
+            (int)d.has(sycl::aspect::fp64),
+            d.get_info<sycl::info::device::partition_max_sub_devices>());
+        return qq;
+    }();
     return q;
 }
 #endif

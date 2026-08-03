@@ -158,6 +158,11 @@ inline void initialize() {
     auto d = q().get_device();
     std::printf("  device            : %s\n",
                 d.get_info<sycl::info::device::name>().c_str());
+    // fp64 matters here: gpu_selector_v may pick an INTEGRATED device whose
+    // double support is absent or emulated. That breaks reductions and physics
+    // while simple stores still look fine -- wrong NUMBERS, not an error.
+    std::printf("  fp64 aspect       : %d %s\n", (int)d.has(sycl::aspect::fp64),
+                d.has(sycl::aspect::fp64) ? "" : "  <-- doubles unsupported on this device!");
     // The PVC trap: a COMPOSITE root device is 6.3x slower than one tile.
     // Reported here so a wrong-device run is visible rather than mysterious.
     std::printf("  max_sub_devices   : %u\n",
@@ -237,6 +242,25 @@ void do_concurrent(Index n, F f) {
     std::for_each(std::execution::par_unseq, index_begin(n), index_end(n), f);
 #else
     for (Index t = 0; t < n; ++t) f(t);
+#endif
+}
+
+// Explicit binary op -- global_max's shape. std::plus is special-cased by some
+// implementations, so a custom associative op is a genuinely different path.
+template <class T, class Binop, class Unary>
+T reduce_op(Index n, T init, Binop binop, Unary unary) {
+#if   defined(TC_BACKEND_SYCL)
+    return oneapi::dpl::transform_reduce(
+        oneapi::dpl::execution::make_device_policy(q()),
+        oneapi::dpl::counting_iterator<Index>(0),
+        oneapi::dpl::counting_iterator<Index>(n), init, binop, unary);
+#elif defined(TC_HAS_PAR)
+    return std::transform_reduce(std::execution::par_unseq,
+                                 index_begin(n), index_end(n), init, binop, unary);
+#else
+    T acc = init;
+    for (Index t = 0; t < n; ++t) acc = binop(acc, unary(t));
+    return acc;
 #endif
 }
 
