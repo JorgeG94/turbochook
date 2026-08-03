@@ -18,7 +18,7 @@ endif()
 #   gpu       : nvc++  -stdpar=gpu       (NVIDIA offload)
 #   multicore : nvc++  -stdpar=multicore (CPU threads)
 #   hip       : hipcc  --hipstdpar       (AMD offload)
-#   sycl      : icpx   -fsycl + oneDPL   (Intel offload)
+#   sycl      : icpx   -fsycl             (Intel offload, raw SYCL)
 #   off       : g++/clang, host-serial   (par_unseq → seq via TC_STDPAR_OFF; no TBB)
 #
 # All five run the SAME source: every parallel loop goes through
@@ -66,7 +66,7 @@ elseif(TC_STDPAR STREQUAL "hip")
   target_compile_definitions(tc_flags INTERFACE TC_STDPAR_HIP)
 
 elseif(TC_STDPAR STREQUAL "sycl")
-  # Intel. oneDPL supplies the parallel algorithms; note the deliberate absence of
+  # Intel. RAW SYCL -- no oneDPL. Note the deliberate absence of
   # -fsycl-pstl-offload, measured to double binary size for no gain (spike 05).
   #
   # TC_STDPAR_SYCL makes parallel.hpp take the oneDPL branch: its own algorithms,

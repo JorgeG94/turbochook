@@ -8,8 +8,9 @@
 //      nvc++ -stdpar=gpu offloads to the GPU, and -stdpar=multicore runs on CPU
 //      threads). Under the TC_STDPAR_OFF define (the g++/clang host build) it
 //      becomes std::execution::seq — sequential, deterministic, and crucially
-//      needs NO TBB. Under TC_STDPAR_SYCL the policy and the algorithms both come
-//      from oneDPL instead. So the same source compiles FIVE ways:
+//      needs NO TBB. Under TC_STDPAR_SYCL there is no execution policy at all:
+//      the launcher calls sycl::queue::parallel_for directly. So the same source
+//      compiles FIVE ways:
 //      gpu / multicore / hip / sycl / host.
 //
 //   2. do_concurrent / do_reduce — THE launch sites, and the only two. Every
@@ -31,11 +32,7 @@
 // =============================================================================
 
 #if defined(TC_STDPAR_SYCL)
-#  include <oneapi/dpl/execution>
-#  include <oneapi/dpl/algorithm>
-#  include <oneapi/dpl/numeric>
-#  include <oneapi/dpl/iterator>
-#  include <sycl/sycl.hpp>
+#  include <sycl/sycl.hpp>          // NO oneDPL -- see the SYCL branch below
 #else
 #  include <execution>
 #  include <ranges>
@@ -75,39 +72,28 @@ inline constexpr const auto& par = std::execution::par_unseq;  // gpu / multicor
 // kernels never learn which backend they are on.
 //
 // Intel is the reason these are functions rather than a bare `std::for_each(par,
-// ...)` at each call site: oneDPL needs its OWN algorithms and its own device
-// policy, so `std::` vs `oneapi::dpl::` has to be decidable in one place.
-#if defined(TC_STDPAR_SYCL)
-// SYCL kernel names must be FORWARD-DECLARABLE, which a lambda closure type is
-// not -- make_device_policy<F> does not compile. A namespace-scope class template
-// does satisfy the rule, and `tag<F>` is still unique per call site because F is.
-// Declared, never defined: these are names, not types anyone instantiates.
-namespace kernel_name {
-template <class> struct do_concurrent_k;
-template <class> struct reduce_k;
-} // namespace kernel_name
-#endif
-
+// ...)` at each call site: it needs sycl::queue::parallel_for and sycl::reduction
+// rather than a standard algorithm at all, so the choice has to be decidable in
+// ONE place instead of at fifty.
 template <class F>
 void do_concurrent(Index count, F f) {
 #if defined(TC_STDPAR_SYCL)
-    // UNIQUE KERNEL NAME PER CALL SITE. oneDPL derives the SYCL kernel name from
-    // the policy's name parameter, so a bare make_device_policy(q) gives EVERY
-    // call site the same policy type and therefore the same name. The kernel
-    // compiled for one functor then gets launched with another's arguments:
-    // ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE where the sizes differ, and
-    // silently WRONG NUMBERS where they happen to match.
-    oneapi::dpl::for_each(oneapi::dpl::execution::make_device_policy<kernel_name::do_concurrent_k<F>>(detail::device_queue()),
-                          oneapi::dpl::counting_iterator<Index>(0),
-                          oneapi::dpl::counting_iterator<Index>(count), f);
-    // Explicit wait. CONTRACT_MEMORY says do_concurrent MAY be async and that a
-    // sync is required before any host read -- and the tree has never had one
-    // anywhere, because nvc++ and libstdc++ both happen to block. Relying on that
-    // is the same mistake as relying on nvc++ to promote the heap: an invariant
-    // held by one implementation's courtesy, written down nowhere. If oneDPL turns
-    // out to block too this costs a no-op; if it does not, it is the difference
-    // between right and wrong answers.
-    detail::device_queue().wait();
+    // RAW SYCL, not oneDPL. oneDPL derives its kernel name from the execution
+    // POLICY's name parameter, so a bare make_device_policy(q) hands every call
+    // site the same name and kernels get launched with the wrong functor's
+    // arguments -- ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE where the sizes
+    // differ, silently wrong numbers where they match. Naming the policy per call
+    // site is the documented remedy and it fights the language: a kernel name must
+    // be forward-declarable and a lambda closure type is not.
+    //
+    // q.parallel_for with an unnamed lambda has no naming problem at all, needs no
+    // oneDPL, and is the same one-flat-range shape every other backend uses. One
+    // dependency fewer, for a launcher that is six lines.
+    if (count <= 0) return;
+    detail::device_queue()
+        .parallel_for(sycl::range<1>(std::size_t(count)),
+                      [=](sycl::id<1> it) { f(Index(it[0])); })
+        .wait();                       // host reads follow immediately
 #else
     // std::views::iota, NOT the hand-rolled counting_iterator below. This is the
     // shape verified to offload on nvc++/V100, and there is no reason to move off
@@ -131,14 +117,21 @@ void do_concurrent(Index count, F f) {
 template <class T, class Binop, class Unary>
 T do_reduce(Index count, T init, Binop binop, Unary unary) {
 #if defined(TC_STDPAR_SYCL)
-    // Unique kernel name per call site -- see do_concurrent above. `Unary` is the
-    // caller's closure type, distinct at every call site.
-    auto r = oneapi::dpl::transform_reduce(
-        oneapi::dpl::execution::make_device_policy<kernel_name::reduce_k<Unary>>(detail::device_queue()),
-        oneapi::dpl::counting_iterator<Index>(0),
-        oneapi::dpl::counting_iterator<Index>(count), init, binop, unary);
-    detail::device_queue().wait();
-    return r;
+    // sycl::reduction takes an arbitrary ASSOCIATIVE binop plus an identity --
+    // `init` is that identity (0 for plus, lowest() for max), which is exactly
+    // what every caller already passes.
+    auto& q = detail::device_queue();
+    if (count <= 0) return init;
+    T* res = sycl::malloc_shared<T>(1, q);
+    if (!res) return init;
+    *res = init;
+    q.parallel_for(sycl::range<1>(std::size_t(count)),
+                   sycl::reduction(res, init, binop),
+                   [=](sycl::id<1> it, auto& acc) { acc.combine(unary(Index(it[0]))); })
+     .wait();
+    const T out = *res;
+    sycl::free(res, q);
+    return out;
 #else
     auto ids = std::views::iota(Index{0}, count);
     return std::transform_reduce(par, ids.begin(), ids.end(), init, binop, unary);
