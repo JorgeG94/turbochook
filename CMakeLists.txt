@@ -199,5 +199,15 @@ if(BUILD_TESTING)
       include(doctest)
     endif()
     doctest_discover_tests(tc_tests)   # registers each TEST_CASE with CTest
+
+    # A SOURCE-level guard for a GPU-only bug. SYCL names an unnamed-lambda kernel
+    # by its mangled closure type, mangling does not encode the TU, and doctest's
+    # DOCTEST_ANON_FUNC_<n> counter restarts per file -- so two test files collide
+    # on one kernel name. That cost 24 of 67 tests on Aurora, half of them as
+    # WRONG NUMBERS rather than errors, and no compiler flag prevents it.
+    # Runs with no GPU and no SYCL toolchain, which is the point: the bug is
+    # invisible on the machine most work happens on.
+    add_test(NAME tu_namespaces
+             COMMAND ${CMAKE_SOURCE_DIR}/tools/check_tu_namespaces.sh)
   endif()
 endif()
