@@ -107,18 +107,21 @@ TEST_CASE("zonal_mean: length-weighted mean over x gives a y-profile") {
     tc::CartesianMesh m(nx, ny, 100.0, 50.0);
     tc::Arena a(4u << 20);
     tc::BaroState s = tc::allocate_baro_state(a, m);
-    std::vector<Real> prof(ny);
+    // zonal_mean WRITES this from a device kernel -- reduce.hpp says so outright
+    // ("`out` must be device-accessible when the backend offloads"). A
+    // std::vector is not, on any backend but nvc++. Take it from the arena.
+    Real* prof = a.alloc2d(ny, 1).data_handle();
 
     // constant along x, varying with y ⇒ mean = the value itself
     tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
                       [=](Index i, Index j) { s.eta[i, j] = 10.0 + j; });
     const tc::Field2 h = s.eta;
-    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof);
     for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx(10.0 + j));
 
     // linear in x (f=i) ⇒ mean = (nx-1)/2 for every row (uniform dx)
     tc::for_each_cell(m.extent_x(tc::Loc::Center), m.extent_y(tc::Loc::Center),
                       [=](Index i, Index j) { s.eta[i, j] = Real(i); });
-    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof.data());
+    tc::zonal_mean(m, [=](Index i, Index j) { return h[i, j]; }, prof);
     for (Index j = 0; j < ny; ++j) CHECK(prof[j] == doctest::Approx((nx - 1) / 2.0));
 }
